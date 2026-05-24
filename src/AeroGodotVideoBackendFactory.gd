@@ -9,7 +9,7 @@ const VERSION := "0.2.0"
 const ManagerScript := preload("res://addons/aerobeat-tool-video-player/src/AeroVideoPlayerManager.gd")
 const BackendScript := preload("AeroGodotVideoBackend.gd")
 
-func create_backend(player_factory: Callable = Callable()) -> AeroVideoVendorBackend:
+func create_backend(player_factory: Callable = Callable()) -> RefCounted:
 	var backend := BackendScript.new()
 	if player_factory.is_valid():
 		backend.set_player_factory(player_factory)
