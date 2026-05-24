@@ -1,0 +1,116 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/video_backend_testbed.gd" id="1_script"]
+
+[node name="VideoBackendTestbed" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBox" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="TitleLabel" type="Label" parent="MarginContainer/VBox"]
+layout_mode = 2
+text = "AeroGodotVideoBackend .ogv proving surface"
+
+[node name="PathLabel" type="Label" parent="MarginContainer/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "res://assets/videos/calm_blue_sea_1.ogv"
+
+[node name="StatusLabel" type="Label" parent="MarginContainer/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "State: idle"
+
+[node name="DetailLabel" type="Label" parent="MarginContainer/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Position: 0.0 / 0.0 | Format: unknown"
+
+[node name="AudioLabel" type="Label" parent="MarginContainer/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Audio: unmuted"
+
+[node name="SurfacePanel" type="PanelContainer" parent="MarginContainer/VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(960, 540)
+layout_mode = 2
+
+[node name="Surface" type="Control" parent="MarginContainer/VBox/SurfacePanel"]
+unique_name_in_owner = true
+layout_mode = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ButtonsRowOne" type="HBoxContainer" parent="MarginContainer/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="LoadButton" type="Button" parent="MarginContainer/VBox/ButtonsRowOne"]
+layout_mode = 2
+text = "Load sample"
+
+[node name="LoadBadButton" type="Button" parent="MarginContainer/VBox/ButtonsRowOne"]
+layout_mode = 2
+text = "Load bad path"
+
+[node name="PlayButton" type="Button" parent="MarginContainer/VBox/ButtonsRowOne"]
+layout_mode = 2
+text = "Play"
+
+[node name="PauseButton" type="Button" parent="MarginContainer/VBox/ButtonsRowOne"]
+layout_mode = 2
+text = "Pause"
+
+[node name="ResumeButton" type="Button" parent="MarginContainer/VBox/ButtonsRowOne"]
+layout_mode = 2
+text = "Resume"
+
+[node name="ButtonsRowTwo" type="HBoxContainer" parent="MarginContainer/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="SeekButton" type="Button" parent="MarginContainer/VBox/ButtonsRowTwo"]
+layout_mode = 2
+text = "Seek 5s"
+
+[node name="StopButton" type="Button" parent="MarginContainer/VBox/ButtonsRowTwo"]
+layout_mode = 2
+text = "Stop"
+
+[node name="MuteButton" type="Button" parent="MarginContainer/VBox/ButtonsRowTwo"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Mute"
+
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowOne/LoadButton" to="." method="_on_load_button_pressed"]
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowOne/LoadBadButton" to="." method="_on_load_bad_button_pressed"]
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowOne/PlayButton" to="." method="_on_play_button_pressed"]
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowOne/PauseButton" to="." method="_on_pause_button_pressed"]
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowOne/ResumeButton" to="." method="_on_resume_button_pressed"]
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowTwo/SeekButton" to="." method="_on_seek_button_pressed"]
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowTwo/StopButton" to="." method="_on_stop_button_pressed"]
+[connection signal="pressed" from="MarginContainer/VBox/ButtonsRowTwo/MuteButton" to="." method="_on_mute_button_pressed"]

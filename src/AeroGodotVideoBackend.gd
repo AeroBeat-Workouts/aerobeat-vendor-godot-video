@@ -3,8 +3,8 @@ extends "res://src/AeroVideoVendorBackend.gd"
 
 const VENDOR_NAME := "godot_video"
 const BACKEND_FAMILY := "godot_builtin_video"
-const SOURCE_KIND_FILE := "file"
-const SOURCE_KIND_URL := "url"
+const SOURCE_KIND_FILE := CoreContract.SOURCE_KIND_FILE
+const SOURCE_KIND_URL := CoreContract.SOURCE_KIND_URL
 const SUPPORTED_SOURCE_KINDS := [SOURCE_KIND_FILE]
 const VERIFIED_EXTENSIONS := ["ogv"]
 const UNVERIFIED_EXTENSIONS := ["mp4", "webm", "mov", "mkv", "avi"]
@@ -16,9 +16,15 @@ const STATE_PLAYING := "playing"
 const STATE_PAUSED := "paused"
 const STATE_ERROR := "error"
 
+const DEFAULT_MUTED_VOLUME := 0.0
+const DEFAULT_UNMUTED_VOLUME := 1.0
+const DEFAULT_MUTED_VOLUME_DB := -80.0
+const DEFAULT_UNMUTED_VOLUME_DB := 0.0
+
 var _surface: Node = null
 var _player: Node = null
 var _player_factory: Callable = Callable()
+var _stream_resource: Variant = null
 var _loaded_source: Dictionary = {}
 var _media_info: Dictionary = {}
 var _last_error: Dictionary = {}
@@ -27,6 +33,7 @@ var _position_seconds: float = 0.0
 var _duration_seconds: float = 0.0
 var _loop_enabled: bool = false
 var _rate: float = 1.0
+var _muted: bool = false
 
 func set_player_factory(factory: Callable) -> void:
 	_player_factory = factory
@@ -34,22 +41,12 @@ func set_player_factory(factory: Callable) -> void:
 func set_player_node(node: Node) -> void:
 	_player = node
 	_sync_player_binding()
+	_sync_player_configuration()
 
 func normalize_source(source: Dictionary) -> Dictionary:
-	var normalized := {
-		"path": "",
-		"kind": SOURCE_KIND_FILE,
-		"loop": false,
-		"autoplay": false,
-		"start_time": 0.0,
-		"rate": 1.0,
-		"metadata": {},
-	}
-	for key in source.keys():
-		normalized[key] = source[key]
-
-	var original_path := String(normalized.get("path", "")).strip_edges()
-	var inferred_kind := String(normalized.get("kind", "")).strip_edges().to_lower()
+	var normalized := CoreContract.normalize_source(source)
+	var original_path := str(normalized.get("path", "")).strip_edges()
+	var inferred_kind := str(normalized.get("kind", "")).strip_edges().to_lower()
 	if inferred_kind.is_empty():
 		inferred_kind = _infer_source_kind(original_path)
 	if original_path.to_lower().begins_with("file://"):
@@ -58,33 +55,27 @@ func normalize_source(source: Dictionary) -> Dictionary:
 		normalized["path"] = original_path
 	normalized["original_path"] = original_path
 	normalized["kind"] = inferred_kind if not inferred_kind.is_empty() else SOURCE_KIND_FILE
-	normalized["loop"] = bool(normalized.get("loop", false))
-	normalized["autoplay"] = bool(normalized.get("autoplay", false))
-	normalized["start_time"] = maxf(0.0, float(normalized.get("start_time", 0.0)))
-	normalized["rate"] = float(normalized.get("rate", 1.0))
-	if typeof(normalized.get("metadata", {})) != TYPE_DICTIONARY:
-		normalized["metadata"] = {}
 	normalized["vendor"] = VENDOR_NAME
 	normalized["backend_family"] = BACKEND_FAMILY
-	normalized["locality"] = _detect_locality(String(normalized.get("path", "")))
-	normalized["is_local_file"] = normalized["kind"] == SOURCE_KIND_FILE and String(normalized.get("locality", "")) != "remote"
-	normalized["extension"] = String(normalized.get("path", "")).get_extension().to_lower()
+	normalized["locality"] = _detect_locality(str(normalized.get("path", "")))
+	normalized["is_local_file"] = normalized["kind"] == SOURCE_KIND_FILE and str(normalized.get("locality", "")) != "remote"
+	normalized["extension"] = str(normalized.get("path", "")).get_extension().to_lower()
 	return normalized
 
 func validate_source(source: Dictionary) -> Dictionary:
-	if String(source.get("path", "")).is_empty():
+	if str(source.get("path", "")).is_empty():
 		return {
 			"code": "backend_source_missing_path",
 			"message": "Video source path must be a non-empty local file path.",
 			"detail": {"field": "path", "source": source.duplicate(true)},
 		}
-	if String(source.get("kind", SOURCE_KIND_FILE)) != SOURCE_KIND_FILE:
+	if str(source.get("kind", SOURCE_KIND_FILE)) != SOURCE_KIND_FILE:
 		return {
 			"code": "backend_source_kind_unsupported",
 			"message": "Godot vendor backend currently supports only local file sources.",
 			"detail": {"field": "kind", "source": source.duplicate(true), "supported": SUPPORTED_SOURCE_KINDS.duplicate()},
 		}
-	if String(source.get("locality", "remote")) == "remote":
+	if str(source.get("locality", "remote")) == "remote":
 		return {
 			"code": "backend_source_not_local",
 			"message": "Godot vendor backend only accepts local file playback in this slice.",
@@ -108,7 +99,8 @@ func get_capabilities() -> Dictionary:
 		"remote_sources_supported": false,
 		"surface_attach_mode": "direct_or_container_child",
 		"surface_types": ["VideoStreamPlayer", "Node", "CanvasItem", "Control"],
-		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status"],
+		"audio_controls": ["mute_toggle"],
+		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status", "audio"],
 	}
 
 func load(source: Dictionary) -> Dictionary:
@@ -116,11 +108,20 @@ func load(source: Dictionary) -> Dictionary:
 	var validation_error := validate_source(normalized)
 	if not validation_error.is_empty():
 		return _fail(
-			String(validation_error.get("code", "backend_invalid_source")),
-			String(validation_error.get("message", "Invalid source.")),
+			str(validation_error.get("code", "backend_invalid_source")),
+			str(validation_error.get("message", "Invalid source.")),
 			validation_error.get("detail", {})
 		)
 
+	var stream_resource: Variant = _load_stream_resource(str(normalized.get("path", "")))
+	if stream_resource == null:
+		return _fail(
+			"backend_stream_load_failed",
+			"Godot could not load the requested video stream resource.",
+			{"path": normalized.get("path", ""), "source": normalized.duplicate(true)}
+		)
+
+	_stream_resource = stream_resource
 	_loaded_source = normalized.duplicate(true)
 	_loop_enabled = bool(_loaded_source.get("loop", false))
 	_rate = float(_loaded_source.get("rate", 1.0))
@@ -142,10 +143,10 @@ func play() -> Dictionary:
 	if _loaded_source.is_empty():
 		return _fail("backend_not_loaded", "Cannot start playback before a source is loaded.")
 	_vendor_state = STATE_PLAYING
-	if _player != null and _player.has_method("play"):
-		_player.call("play")
-	elif _player != null and _player.has_method("set"):
-		_player.set("playing", true)
+	if _player != null:
+		if _player.has_method("play"):
+			_player.call("play")
+		_set_player_property("paused", false)
 	_last_error = {}
 	return _ok({"vendor_state": _vendor_state})
 
@@ -153,10 +154,12 @@ func pause() -> Dictionary:
 	if _loaded_source.is_empty():
 		return _fail("backend_not_loaded", "Cannot pause playback before a source is loaded.")
 	_vendor_state = STATE_PAUSED
-	if _player != null and _player.has_method("pause"):
-		_player.call("pause")
-	elif _player != null and _player.has_method("set"):
-		_player.set("playing", false)
+	if _player != null:
+		if _player.has_method("pause"):
+			_player.call("pause")
+		elif _player.has_method("set"):
+			_set_player_property("playing", false)
+		_set_player_property("paused", true)
 	_last_error = {}
 	return _ok({"vendor_state": _vendor_state})
 
@@ -165,11 +168,12 @@ func stop() -> Dictionary:
 		return _fail("backend_not_loaded", "Cannot stop playback before a source is loaded.")
 	_vendor_state = STATE_READY
 	_position_seconds = 0.0
-	if _player != null and _player.has_method("stop"):
-		_player.call("stop")
-	elif _player != null and _player.has_method("set"):
-		_player.set("playing", false)
-		_player.set("stream_position", 0.0)
+	if _player != null:
+		if _player.has_method("stop"):
+			_player.call("stop")
+		_set_player_property("paused", false)
+		_set_player_property("playing", false)
+		_set_player_property("stream_position", 0.0)
 	_last_error = {}
 	return _ok({"vendor_state": _vendor_state, "position": _position_seconds})
 
@@ -179,8 +183,7 @@ func seek(seconds: float) -> Dictionary:
 	_position_seconds = maxf(0.0, seconds)
 	if _duration_seconds > 0.0:
 		_position_seconds = minf(_position_seconds, _duration_seconds)
-	if _player != null and _player.has_method("set"):
-		_player.set("stream_position", _position_seconds)
+	_set_player_property("stream_position", _position_seconds)
 	_last_error = {}
 	return _ok({"vendor_state": _vendor_state, "position": _position_seconds})
 
@@ -188,8 +191,7 @@ func set_loop(enabled: bool) -> Dictionary:
 	_loop_enabled = enabled
 	if not _loaded_source.is_empty():
 		_loaded_source["loop"] = enabled
-	if _player != null and _player.has_method("set"):
-		_player.set("loop", enabled)
+	_set_player_property("loop", enabled)
 	_last_error = {}
 	return _ok({"loop": _loop_enabled})
 
@@ -199,10 +201,35 @@ func set_rate(rate: float) -> Dictionary:
 	_rate = rate
 	if not _loaded_source.is_empty():
 		_loaded_source["rate"] = rate
-	if _player != null and _player.has_method("set"):
-		_player.set("playback_speed", rate)
+	var applied_to_player := false
+	if _player_supports_property("playback_speed"):
+		applied_to_player = _set_player_property("playback_speed", rate)
 	_last_error = {}
-	return _ok({"rate": _rate})
+	return _ok({"rate": _rate, "applied_to_player": applied_to_player})
+
+func set_muted(muted: bool) -> Dictionary:
+	_muted = muted
+	var applied := false
+	if _player_supports_property("volume"):
+		applied = _set_player_property("volume", DEFAULT_MUTED_VOLUME if muted else DEFAULT_UNMUTED_VOLUME)
+	elif _player_supports_property("volume_db"):
+		applied = _set_player_property("volume_db", DEFAULT_MUTED_VOLUME_DB if muted else DEFAULT_UNMUTED_VOLUME_DB)
+	_last_error = {}
+	return _ok({"audio": get_audio_state(), "applied_to_player": applied})
+
+func get_audio_state() -> Dictionary:
+	var audio := {
+		"muted": _muted,
+		"player_present": _player != null,
+		"volume": DEFAULT_UNMUTED_VOLUME,
+		"volume_db": DEFAULT_UNMUTED_VOLUME_DB,
+	}
+	if _player != null:
+		if _player_supports_property("volume"):
+			audio["volume"] = float(_player.get("volume"))
+		if _player_supports_property("volume_db"):
+			audio["volume_db"] = float(_player.get("volume_db"))
+	return audio
 
 func get_state() -> Dictionary:
 	return translate_backend_state(_snapshot_player_state())
@@ -214,14 +241,18 @@ func get_duration() -> float:
 	return float(get_state().get("duration", _duration_seconds))
 
 func get_media_info() -> Dictionary:
-	return _media_info.duplicate(true)
+	var info := _media_info.duplicate(true)
+	if info.is_empty() and not _loaded_source.is_empty():
+		info = _build_media_info(_loaded_source)
+	info["audio"] = get_audio_state()
+	return info
 
 func attach_surface(node: Node) -> Dictionary:
 	if node == null:
 		return _fail("backend_invalid_surface", "Cannot attach a null output surface.")
 	_surface = node
 	var player_result := _ensure_player()
-	if not bool(player_result.get("success", false)):
+	if not bool(player_result.get(CoreContract.RESULT_SUCCESS, false)):
 		return player_result
 	_sync_player_binding()
 	_sync_player_configuration()
@@ -253,7 +284,7 @@ func translate_backend_error(code: String, message: String, detail: Dictionary =
 	var category := "runtime"
 	var recoverable := true
 	match code:
-		"backend_source_missing_path", "backend_source_not_local", "backend_source_kind_unsupported":
+		"backend_source_missing_path", "backend_source_not_local", "backend_source_kind_unsupported", "backend_stream_load_failed":
 			category = "source"
 		"backend_invalid_surface", "backend_player_unavailable":
 			category = "surface"
@@ -285,6 +316,7 @@ func translate_backend_state(raw_state: Dictionary = {}) -> Dictionary:
 		"duration": _duration_seconds,
 		"loop": _loop_enabled,
 		"rate": _rate,
+		"audio": get_audio_state(),
 		"last_error": _last_error.duplicate(true),
 		"source": _loaded_source.duplicate(true),
 		"raw": raw_state.duplicate(true),
@@ -329,18 +361,18 @@ func _detect_locality(path: String) -> String:
 	return "relative_path"
 
 func _build_media_info(source: Dictionary) -> Dictionary:
-	var extension := String(source.get("extension", "")).to_lower()
+	var extension := str(source.get("extension", "")).to_lower()
 	var format_status := "unknown"
 	if VERIFIED_EXTENSIONS.has(extension):
 		format_status = "verified"
 	elif UNVERIFIED_EXTENSIONS.has(extension):
 		format_status = "unverified"
 	return {
-		"path": String(source.get("path", "")),
-		"kind": String(source.get("kind", SOURCE_KIND_FILE)),
+		"path": str(source.get("path", "")),
+		"kind": str(source.get("kind", SOURCE_KIND_FILE)),
 		"vendor": VENDOR_NAME,
 		"backend_family": BACKEND_FAMILY,
-		"locality": String(source.get("locality", "")),
+		"locality": str(source.get("locality", "")),
 		"extension": extension,
 		"format_status": format_status,
 		"duration": _duration_seconds,
@@ -348,19 +380,34 @@ func _build_media_info(source: Dictionary) -> Dictionary:
 		"surface_attached": _surface != null,
 		"loop": _loop_enabled,
 		"rate": _rate,
+		"audio": get_audio_state(),
 		"metadata": source.get("metadata", {}).duplicate(true),
 	}
+
+func _load_stream_resource(path: String) -> Variant:
+	var candidate_path := path
+	if path.begins_with("/"):
+		var localized := ProjectSettings.localize_path(path)
+		if localized.begins_with("res://") or localized.begins_with("user://"):
+			candidate_path = localized
+	if not (candidate_path.begins_with("res://") or candidate_path.begins_with("user://")):
+		return null
+	if not ResourceLoader.exists(candidate_path):
+		return null
+	return load(candidate_path)
 
 func _ensure_player() -> Dictionary:
 	if _player != null:
 		return _ok({"player_present": true})
-	if _player_factory.is_valid():
+	if _surface is VideoStreamPlayer:
+		_player = _surface
+	elif _player_factory.is_valid():
 		_player = _player_factory.call()
 	elif ClassDB.can_instantiate("VideoStreamPlayer"):
 		_player = ClassDB.instantiate("VideoStreamPlayer")
 	if _player == null:
 		return _fail("backend_player_unavailable", "Unable to create a Godot video player node for the attached surface.")
-	if String(_player.name).is_empty():
+	if str(_player.name).is_empty():
 		_player.name = "AeroGodotVideoPlayer"
 	return _ok({"player_present": true})
 
@@ -377,11 +424,18 @@ func _sync_player_binding() -> void:
 func _sync_player_configuration() -> void:
 	if _player == null:
 		return
-	if _player.has_method("set"):
-		_player.set("loop", _loop_enabled)
-		_player.set("autoplay", bool(_loaded_source.get("autoplay", false)))
-		_player.set("playback_speed", _rate)
-		_player.set("stream_position", _position_seconds)
+	if _stream_resource != null:
+		if _player_supports_property("stream"):
+			_set_player_property("stream", _stream_resource)
+		elif _player.has_method("set_stream"):
+			_player.call("set_stream", _stream_resource)
+	_set_player_property("loop", _loop_enabled)
+	_set_player_property("autoplay", bool(_loaded_source.get("autoplay", false)))
+	_set_player_property("stream_position", _position_seconds)
+	if _player_supports_property("playback_speed"):
+		_set_player_property("playback_speed", _rate)
+	if _muted:
+		set_muted(_muted)
 	if _player.has_method("apply_source_descriptor") and not _loaded_source.is_empty():
 		_player.call("apply_source_descriptor", _loaded_source.duplicate(true))
 
@@ -393,31 +447,54 @@ func _snapshot_player_state() -> Dictionary:
 		"duration": _duration_seconds,
 		"loop": _loop_enabled,
 		"rate": _rate,
+		"audio": get_audio_state(),
 	}
-	if _player != null and _player.has_method("get"):
-		raw["playing"] = bool(_player.get("playing"))
-		raw["paused"] = not bool(raw.get("playing", false)) and _vendor_state == STATE_PAUSED
-		raw["stream_position"] = float(_player.get("stream_position"))
-		raw["loop"] = bool(_player.get("loop"))
-		raw["playback_speed"] = float(_player.get("playback_speed"))
-		raw["autoplay"] = bool(_player.get("autoplay"))
-		raw["player_name"] = String(_player.name)
-		raw["position"] = float(raw.get("stream_position", _position_seconds))
-		raw["rate"] = float(raw.get("playback_speed", _rate))
+	if _player != null:
+		if _player_supports_property("stream_position"):
+			raw["stream_position"] = float(_player.get("stream_position"))
+			raw["position"] = float(raw.get("stream_position", _position_seconds))
+		if _player_supports_property("loop"):
+			raw["loop"] = bool(_player.get("loop"))
+		if _player_supports_property("playback_speed"):
+			raw["playback_speed"] = float(_player.get("playback_speed"))
+			raw["rate"] = float(raw.get("playback_speed", _rate))
+		if _player_supports_property("autoplay"):
+			raw["autoplay"] = bool(_player.get("autoplay"))
+		if _player_supports_property("paused"):
+			raw["paused"] = bool(_player.get("paused"))
+		raw["playing"] = _is_player_playing(raw)
+		raw["player_name"] = str(_player.name)
 	return raw
 
+func _player_supports_property(property_name: String) -> bool:
+	if _player == null:
+		return false
+	for property_info in _player.get_property_list():
+		if str(property_info.get("name", "")) == property_name:
+			return true
+	return false
+
+func _set_player_property(property_name: String, value: Variant) -> bool:
+	if _player == null or not _player_supports_property(property_name):
+		return false
+	_player.set(property_name, value)
+	return true
+
+func _is_player_playing(raw: Dictionary) -> bool:
+	if _player == null:
+		return false
+	if _player.has_method("is_playing"):
+		return bool(_player.call("is_playing"))
+	if _player_supports_property("playing"):
+		return bool(_player.get("playing"))
+	if raw.has("paused"):
+		return not bool(raw.get("paused", false)) and _vendor_state == STATE_PLAYING
+	return _vendor_state == STATE_PLAYING
+
 func _ok(detail: Dictionary = {}) -> Dictionary:
-	return {
-		RESULT_SUCCESS: true,
-		RESULT_DETAIL: detail.duplicate(true),
-	}
+	return CoreContract.ok(detail)
 
 func _fail(code: String, message: String, detail: Dictionary = {}) -> Dictionary:
 	_last_error = translate_backend_error(code, message, detail)
 	_vendor_state = STATE_ERROR
-	return {
-		RESULT_SUCCESS: false,
-		RESULT_CODE: code,
-		RESULT_MESSAGE: message,
-		RESULT_DETAIL: detail.duplicate(true),
-	}
+	return CoreContract.fail(code, message, detail)

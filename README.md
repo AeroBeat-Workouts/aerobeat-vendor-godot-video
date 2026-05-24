@@ -1,22 +1,66 @@
-# AeroBeat Tool Template
+# AeroBeat Vendor Godot Video
 
-This is the official template for creating **Tool** repositories within the current AeroBeat v1 architecture.
+This repo owns the **Godot-specific video backend/factory layer** for the current AeroBeat tool architecture.
 
 It should be read against the locked product direction from `aerobeat-docs`:
 
 - **Primary release target:** PC community first
 - **Official v1 gameplay features:** Boxing and Flow
 - **Official v1 gameplay input:** camera only
-- **Tool stance:** tools should stay workflow-oriented and gameplay-mode agnostic enough to support the current product slice without implying equal-status future gameplay/input/platform scope
-- **Tool lane ownership:** shared tool-side DTOs, progress/result models, and workflow interfaces belong in `aerobeat-tool-core`; concrete authoring/import/export/validation tooling belongs in specific `aerobeat-tool-*` repos
+- **Layering stance:** this repo does not define the generic playback facade; it provides the Godot-native backend underneath the shared tool-side playback contract
+- **Collision-safety stance:** this repo must not export a second generic `AeroToolManager` into Godot's flat global script namespace
+
+## Current package surface
+
+The public package surface now centers on two explicit Godot-specific entrypoints:
+
+- `src/AeroGodotVideoBackend.gd` — the Godot-native backend implementation that plugs into `AeroVideoPlayerManager`
+- `src/AeroGodotVideoBackendFactory.gd` — a small collision-safe factory that creates either the backend or a pre-wired `AeroVideoPlayerManager`
+
+`aerobeat-tool-video-player` owns the stable playback facade. This vendor repo stays focused on:
+
+- Godot-native `VideoStreamPlayer` creation and surface binding
+- local-file source normalization and validation
+- Godot stream loading for the verified `.ogv` path
+- vendor capability reporting and state translation
+- vendor-local audio mute/state helpers for proving and inspection
+
+## Ownership split
+
+- `aerobeat-tool-core` owns the shared playback vocabulary (`AeroVideoPlaybackContract`)
+- `aerobeat-tool-video-player` owns the stable public facade (`AeroVideoPlayerManager`) and generic playback lifecycle semantics
+- `aerobeat-vendor-godot-video` owns the Godot backend/factory layer and should be injected beneath `AeroVideoPlayerManager`
+
+## Downstream factory decision
+
+Downstream repos should stop depending on any vendor-local generic manager name from this repo.
+
+Use one of these two paths instead:
+
+1. **Preferred explicit wiring**
+   - instantiate `AeroVideoPlayerManager`
+   - instantiate `AeroGodotVideoBackend`
+   - inject the backend via `manager.set_backend(...)`
+
+2. **Small convenience factory**
+   - instantiate `AeroGodotVideoBackendFactory`
+   - call `create_manager()` for a pre-wired `AeroVideoPlayerManager`
+
+This keeps the public playback contract stable while avoiding class-name collisions in combined GodotEnv surfaces.
+
+## Repo-local proving surface
+
+The hidden `.testbed/` workbench now includes a real `.ogv` proving surface.
+
+- `.testbed/assets/videos/calm_blue_sea_1.ogv` copies the proven environment-lane sample
+- `.testbed/scenes/video_backend_testbed.tscn` provides a manual proving scene for load / play / pause / resume / seek / stop / mute / failure handling
+- `.testbed/tests/test_AeroGodotVideoBackendFactory.gd` exercises the factory + backend contract path under GUT
 
 ## 📋 Repository Details
 
-- **Type:** Tool template
+- **Type:** Vendor-specific Godot video backend package
 - **License:** **Mozilla Public License 2.0 (MPL 2.0)**
-- **Dependency contract:**
-  - `aerobeat-tool-core` — required shared tool/workflow contract
-  - additional adjacent lane/core repos only when the specific tool actually consumes them (commonly `aerobeat-content-core` or `aerobeat-asset-core`)
+- **Verified media target in this repo:** local `.ogv` playback through Godot's built-in video path
 
 ## GodotEnv development flow
 
@@ -39,7 +83,11 @@ cd .testbed
 godotenv addons install
 ```
 
-That restores this repo's current dev/test manifest into `.testbed/addons/`. Canonically, Tool templates should keep the baseline manifest narrow: `aerobeat-tool-core` plus test-only tooling.
+If addon state gets noisy during AeroBeat polyrepo work, use the canonical helper instead of editing mirrored addon payloads directly:
+
+```bash
+/home/derrick/.openclaw/workspace/scripts/godotenv-sync --repo /home/derrick/.openclaw/workspace/projects/aerobeat/aerobeat-vendor-godot-video
+```
 
 ### Open the workbench
 
@@ -49,7 +97,7 @@ From the repo root:
 godot --editor --path .testbed
 ```
 
-Use this `.testbed/` project as the canonical direct-development and bugfinding surface for tool-template work.
+Use this `.testbed/` project as the canonical direct-development and bugfinding surface for backend/factory work.
 
 ### Import smoke check
 
@@ -73,8 +121,6 @@ godot --headless --path .testbed --script addons/gut/gut_cmdln.gd \
 ### Validation notes
 
 - `.testbed/addons.jsonc` is the committed dev/test dependency contract.
-- The canonical template manifest for this repo is `aerobeat-tool-core` + `gut`.
-- `aerobeat-tool-core` is currently pinned to `main` intentionally because the repo does not yet have release tags; switch to a tag once tagged releases exist.
-- If a concrete tool needs adjacent lane repos, add them intentionally rather than restoring a universal `aerobeat-core` baseline.
-- Repo-local unit tests live under `.testbed/tests/` and currently validate repo metadata plus the template stub contract.
-- The current package shape is consumed from the repo root (`subfolder: "/"`) for downstream installs.
+- The manifest intentionally includes `aerobeat-tool-core`, `aerobeat-tool-video-player`, and `gut`.
+- The manual proving scene is repo-local and uses the real `.ogv` sample rather than introducing a new ad hoc fixture.
+- This repo should not reintroduce a generic public manager name; the public tool-facing facade remains `AeroVideoPlayerManager` upstream.
