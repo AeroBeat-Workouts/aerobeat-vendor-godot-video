@@ -1,5 +1,5 @@
 class_name AeroGodotVideoBackend
-extends "res://src/AeroVideoVendorBackend.gd"
+extends "AeroVideoVendorBackend.gd"
 
 const VENDOR_NAME := "godot_video"
 const BACKEND_FAMILY := "godot_builtin_video"
