@@ -21,7 +21,7 @@ The public package surface now centers on two explicit Godot-specific entrypoint
 
 - Godot-native `VideoStreamPlayer` creation and surface binding
 - local-file source normalization and validation
-- Godot stream loading for the verified `.ogv` path
+- Godot stream loading for the verified `.ogv` path, including absolute local files that live outside the project tree
 - vendor capability reporting and state translation
 - vendor-local audio mute/state helpers for proving and inspection
 

@@ -390,11 +390,31 @@ func _load_stream_resource(path: String) -> Variant:
 		var localized := ProjectSettings.localize_path(path)
 		if localized.begins_with("res://") or localized.begins_with("user://"):
 			candidate_path = localized
+		else:
+			return _load_external_stream_resource(path)
 	if not (candidate_path.begins_with("res://") or candidate_path.begins_with("user://")):
 		return null
 	if not ResourceLoader.exists(candidate_path):
 		return null
 	return load(candidate_path)
+
+func _load_external_stream_resource(path: String) -> Variant:
+	if not FileAccess.file_exists(path):
+		return null
+	if path.get_extension().to_lower() != "ogv":
+		return null
+	if not ClassDB.can_instantiate("VideoStreamTheora"):
+		return null
+	var stream: Variant = ClassDB.instantiate("VideoStreamTheora")
+	if stream == null:
+		return null
+	if stream.has_method("set_file"):
+		stream.call("set_file", path)
+	elif _object_supports_property(stream, "file"):
+		stream.set("file", path)
+	else:
+		return null
+	return stream
 
 func _ensure_player() -> Dictionary:
 	if _player != null:
@@ -467,9 +487,12 @@ func _snapshot_player_state() -> Dictionary:
 	return raw
 
 func _player_supports_property(property_name: String) -> bool:
-	if _player == null:
+	return _object_supports_property(_player, property_name)
+
+func _object_supports_property(target: Variant, property_name: String) -> bool:
+	if target == null or not (target is Object):
 		return false
-	for property_info in _player.get_property_list():
+	for property_info in target.get_property_list():
 		if str(property_info.get("name", "")) == property_name:
 			return true
 	return false
