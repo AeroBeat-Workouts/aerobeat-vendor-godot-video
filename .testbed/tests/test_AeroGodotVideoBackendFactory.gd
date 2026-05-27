@@ -48,12 +48,17 @@ func test_public_surface_is_vendor_specific_and_collision_safe() -> void:
 	assert_false(class_names.has("AeroToolManager"), "Repo should no longer export a generic AeroToolManager global class")
 	assert_true(class_names.has("AeroGodotVideoBackend"), "Repo should export the vendor-specific backend class")
 	assert_true(class_names.has("AeroGodotVideoBackendFactory"), "Repo should export the vendor-specific factory class")
-	assert_eq(AeroGodotVideoBackendFactory.VERSION, "0.2.0", "Factory version should reflect the backend/factory refactor")
+	assert_true(class_names.has("AeroGodotVideoSlotBank"), "Repo should export the vendor-local multi-slot helper class")
+	assert_eq(AeroGodotVideoBackendFactory.VERSION, "0.3.0", "Factory version should reflect the multi-slot vendor helper slice")
 
-func test_factory_can_create_a_prewired_video_player_manager() -> void:
+func test_factory_can_create_a_prewired_video_player_manager_and_slot_bank() -> void:
 	assert_true(_manager is AeroVideoPlayerManager, "Factory should create the stable tool-facing manager")
 	assert_true(_manager.get_backend() is AeroGodotVideoBackend, "Factory-created manager should be wired to the Godot backend")
 	assert_eq(str(_manager.get_state().get("state", "")), AeroVideoPlayerManager.STATE_IDLE, "Fresh manager should begin idle")
+	var slot_bank := _factory.create_slot_bank(Callable(self, "_make_fake_player"))
+	add_child_autofree(slot_bank)
+	assert_true(slot_bank is AeroGodotVideoSlotBank, "Factory should create the vendor-local multi-slot helper")
+	assert_true(bool(slot_bank.get_capabilities().get("supports_slots", false)), "Slot bank capabilities should advertise slot support")
 
 func test_backend_loads_the_real_ogv_sample_and_reports_verified_media() -> void:
 	var surface := Node.new()
@@ -127,6 +132,85 @@ func test_manager_path_supports_load_play_pause_resume_seek_stop_and_audio_state
 	assert_true(bool(backend.get_audio_state().get("muted", false)), "Audio state should report muted after mute toggle")
 	assert_true(bool(backend.set_muted(false).get("success", false)), "Vendor backend should support unmuting")
 	assert_false(bool(backend.get_audio_state().get("muted", true)), "Audio state should report unmuted after restoring audio")
+
+func test_backend_applies_and_updates_loop_state_on_the_player() -> void:
+	var surface := Node.new()
+	surface.name = "LoopSurface"
+	add_child_autofree(surface)
+	assert_true(bool(_backend.attach_surface(surface).get("success", false)), "Backend should attach to a surface container for loop coverage")
+	assert_true(bool(_backend.load({
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 12.0,
+		"loop": true,
+		"metadata": {"real_sample": true, "scenario": "loop"},
+	}).get("success", false)), "Backend should load the sample with loop enabled")
+	var player := surface.get_child(0)
+	assert_true(bool(player.get("loop")), "Fake player should receive loop=true from the initial load")
+	assert_true(bool(_backend.get_state().get("loop", false)), "Backend state should report loop=true after load")
+	assert_true(bool(_backend.set_loop(false).get("success", false)), "Backend should allow loop to be disabled after load")
+	assert_false(bool(player.get("loop")), "Fake player should reflect loop=false after toggling loop off")
+	assert_false(bool(_backend.get_state().get("loop", true)), "Backend state should report loop=false after toggle")
+
+func test_slot_bank_supports_multiple_independent_video_slots() -> void:
+	var slot_bank := _factory.create_slot_bank(Callable(self, "_make_fake_player"))
+	add_child_autofree(slot_bank)
+
+	var primary_surface := Node.new()
+	primary_surface.name = "PrimarySurface"
+	add_child_autofree(primary_surface)
+	var secondary_surface := Node.new()
+	secondary_surface.name = "SecondarySurface"
+	add_child_autofree(secondary_surface)
+
+	assert_true(bool(slot_bank.attach_slot_surface("primary", primary_surface).get("success", false)), "Primary slot should attach a surface")
+	assert_true(bool(slot_bank.attach_slot_surface("secondary", secondary_surface).get("success", false)), "Secondary slot should attach a surface")
+	assert_true(bool(slot_bank.load_slot("primary", {
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 12.0,
+		"start_time": 1.0,
+		"loop": false,
+		"metadata": {"slot": "primary", "real_sample": true},
+	}).get("success", false)), "Primary slot should load the sample")
+	assert_true(bool(slot_bank.load_slot("secondary", {
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 24.0,
+		"start_time": 4.0,
+		"loop": true,
+		"metadata": {"slot": "secondary", "real_sample": true},
+	}).get("success", false)), "Secondary slot should load the sample independently")
+
+	var primary_manager := slot_bank.get_slot_manager("primary")
+	var secondary_manager := slot_bank.get_slot_manager("secondary")
+	assert_not_null(primary_manager, "Primary slot should expose its manager")
+	assert_not_null(secondary_manager, "Secondary slot should expose its manager")
+	assert_false(primary_manager == secondary_manager, "Each slot should receive an independent manager instance")
+	assert_eq(slot_bank.get_slot_names().size(), 2, "Slot bank should track both created slots")
+
+	var primary_state := slot_bank.get_slot_state("primary")
+	var secondary_state := slot_bank.get_slot_state("secondary")
+	assert_eq(float(primary_state.get("position", 0.0)), 1.0, "Primary slot should preserve its own start_time")
+	assert_eq(float(secondary_state.get("position", 0.0)), 4.0, "Secondary slot should preserve its own start_time")
+	assert_false(bool(primary_state.get("loop", true)), "Primary slot should keep loop disabled from its source")
+	assert_true(bool(secondary_state.get("loop", false)), "Secondary slot should keep loop enabled from its source")
+
+	assert_true(bool(slot_bank.play_slot("primary").get("success", false)), "Primary slot should play independently")
+	assert_eq(str(slot_bank.get_slot_state("primary").get("state", "")), AeroVideoPlayerManager.STATE_PLAYING, "Primary slot should enter playing state")
+	assert_eq(str(slot_bank.get_slot_state("secondary").get("state", "")), AeroVideoPlayerManager.STATE_READY, "Secondary slot should remain ready when only primary plays")
+
+	assert_true(bool(slot_bank.set_slot_loop("primary", true).get("success", false)), "Primary slot should support loop toggles")
+	assert_true(bool(slot_bank.set_slot_loop("secondary", false).get("success", false)), "Secondary slot should support independent loop toggles")
+	var primary_player := primary_surface.get_child(0)
+	var secondary_player := secondary_surface.get_child(0)
+	assert_true(bool(primary_player.get("loop")), "Primary player should now have loop enabled")
+	assert_false(bool(secondary_player.get("loop")), "Secondary player should now have loop disabled")
+	assert_true(bool(slot_bank.get_slot_state("primary").get("loop", false)), "Primary state should report its updated loop value")
+	assert_false(bool(slot_bank.get_slot_state("secondary").get("loop", true)), "Secondary state should report its updated loop value")
+
+	assert_true(bool(slot_bank.set_slot_muted("secondary", true).get("success", false)), "Secondary slot should expose vendor-local mute control")
+	var primary_backend: Variant = primary_manager.get_backend()
+	var secondary_backend: Variant = secondary_manager.get_backend()
+	assert_false(bool(primary_backend.get_audio_state().get("muted", true)), "Muting secondary should not affect primary audio state")
+	assert_true(bool(secondary_backend.get_audio_state().get("muted", false)), "Secondary slot should report muted after its independent mute toggle")
 
 func test_backend_failure_cases_surface_honest_errors() -> void:
 	var remote_result := _backend.load({"path": "https://example.com/demo.ogv"})
