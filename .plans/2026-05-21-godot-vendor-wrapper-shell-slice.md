@@ -110,9 +110,9 @@ The first coder slice in this repo should include only vendor-local work needed 
 **Files Created/Deleted/Modified:**
 - Whatever Task 1 changed; QA should cite exact touched files in its evidence.
 
-**Status:** ⏳ Pending
+**Status:** ✅ Complete
 
-**Results:** Blocked on coder completion.
+**Results:** Independently QA-verified commit `59613e0` on 2026-05-22 against `REF-01`, `REF-03`, `REF-04`, `REF-05`, and `REF-07`. Exact commands/results: `git status --short` (clean working tree), `git show --stat --oneline --name-only 59613e0 --` (touched only `src/AeroVideoVendorBackend.gd`, `src/AeroGodotVideoBackend.gd`, `src/AeroToolManager.gd`, `.testbed/tests/test_AeroToolManager.gd`, `.testbed/tests/helpers/FakeVideoStreamPlayer.gd`), `git show --name-only --format='' 59613e0 | grep -E '(^|/)(addons)(/|$)|^\.testbed/addons/' || true` (no `/addons/` paths touched), `cd .testbed && godotenv addons install` (resolved/install-only refresh for `aerobeat-tool-core` and `gut`), `godot --headless --path . --import` (succeeded on Godot `4.6.2`), `godot --headless --path . --script addons/gut/gut_cmdln.gd -gdir=res://tests -ginclude_subdirs -gexit` (`10/10` tests passed, exit `0`). Source review confirmed vendor-local backend/wrapper classes, local-file normalization, media/capability helpers, surface attach/detach, and backend-local error/state translation all live in repo-root `src/`, while generic lifecycle verbs remain owned by `aerobeat-tool-video-player` and are not surfaced as the public vendor-manager contract here. `.testbed/` remained the proving surface and no addon mirror was treated as owned source. Non-blocking gap noted for audit visibility: GUT reported one orphan (`AeroGodotVideoPlayer` fake child) and Godot emitted an ObjectDB leak warning at exit during the detach test path, but the suite still passed and slice acceptance remains valid for QA.
 
 ---
 
@@ -130,9 +130,9 @@ The first coder slice in this repo should include only vendor-local work needed 
 **Files Created/Deleted/Modified:**
 - No new files expected unless audit notes/docs are needed.
 
-**Status:** ⏳ Pending
+**Status:** ✅ Complete
 
-**Results:** Blocked on QA completion.
+**Results:** Independently audited commit `59613e0` on 2026-05-22 against `REF-01`, `REF-03`, `REF-04`, `REF-05`, `REF-06`, and `REF-07`, plus the coordination context in `/home/derrick/.openclaw/workspace/projects/openclaw-cookie/.plans/aerobeat-architecture/2026-05-22-parallel-video-and-donor-lanes.md`. Exact commands/results: `bd show aerobeat-vendor-godot-video-tdy --json` (confirmed QA evidence/closure), `git show --stat --oneline --name-only 59613e0 --` (touched only `src/AeroVideoVendorBackend.gd`, `src/AeroGodotVideoBackend.gd`, `src/AeroToolManager.gd`, `.testbed/tests/test_AeroToolManager.gd`, `.testbed/tests/helpers/FakeVideoStreamPlayer.gd`), `git show --name-only --format='' 59613e0 | grep -E '(^|/)(addons)(/|$)|^\.testbed/addons/' || true` (no `/addons/` paths touched), `cd .testbed && godotenv addons install && godot --headless --path . --import && godot --headless --path . --script addons/gut/gut_cmdln.gd -gdir=res://tests -ginclude_subdirs -gexit` (import succeeded; `10/10` tests passed; exit `0`; reproduced one orphan plus `ObjectDB instances leaked at exit` warning). Source/diff review confirmed the planned vendor-local shell is present and bounded correctly: repo-root `src/` owns backend/wrapper classes, local-file source normalization, media/capability helpers, surface attach/detach behavior, and backend-local state/error translation; the public vendor manager exposes `prepare_source`, `attach_surface`, `detach_surface`, `get_state`, `get_media_info`, and error translation, but does not surface the tool-owned singleton lifecycle contract as this repo’s public ownership. `.testbed/` remained the proving surface, sharable code stayed at repo root, and no addon mirror was treated as owned source. Audit conclusion: the orphan/leak warning is real but non-blocking for this slice because it is confined to test cleanup timing around the fake player detach path and does not invalidate the claimed behavior or ownership boundary; it is worth a follow-up cleanup bead, not a failure of this scoped shell slice.
 
 ---
 
@@ -158,19 +158,19 @@ This creates a strict repo-local `coder → QA → auditor` chain.
 
 ## Final Results
 
-**Status:** ⚠️ Partial
+**Status:** ✅ Complete
 
 **What We Built:**
 - Initialized repo-local planning/Beads for the vendor wrapper slice.
 - Implemented the first Godot-native vendor wrapper shell behind the future tool contract.
 - Added deterministic `.testbed` coverage for source normalization, vendor metadata surfacing, surface binding, and backend-local state/error translation.
-- Left the repo ready for QA and audit to verify the handoff.
+- Completed independent QA and audit verification, including a fresh `.testbed` import/test rerun during audit.
 
 **Reference Check:**
 - `REF-01` remained the repo/`.testbed` proving convention.
 - `REF-03` and `REF-04` stayed the contract boundary that generic playback lifecycle semantics belong to the tool repo.
 - `REF-05` and `REF-06` remained the ownership boundary preventing replay/tool lifecycle scope creep into this vendor repo.
-- `REF-07` was superseded by the expanded repo-local vendor-wrapper tests.
+- `REF-07` was superseded by the expanded repo-local vendor-wrapper tests and independently revalidated by audit.
 
 **Commits:**
 - `59613e0` - Implement Godot video vendor wrapper shell
@@ -178,6 +178,7 @@ This creates a strict repo-local `coder → QA → auditor` chain.
 **Lessons Learned:**
 - The vendor repo had `.beads/` scaffolding but no initialized database yet, so `bd init --quiet` was required before creating repo-local work items.
 - The safest first slice is backend-wrapper stabilization and vendor-quirk surfacing, not generic playback service semantics.
+- The current orphan/ObjectDB leak warning appears confined to test cleanup timing around the fake player detach path; it deserves follow-up cleanup, but it did not block truthful completion of this scoped vendor-wrapper shell.
 
 ---
 
