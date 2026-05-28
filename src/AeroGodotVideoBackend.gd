@@ -5,7 +5,8 @@ const VENDOR_NAME := "godot_video"
 const BACKEND_FAMILY := "godot_builtin_video"
 const SOURCE_KIND_FILE := CoreContract.SOURCE_KIND_FILE
 const SOURCE_KIND_URL := CoreContract.SOURCE_KIND_URL
-const SUPPORTED_SOURCE_KINDS := [SOURCE_KIND_FILE]
+const SOURCE_KIND_PACKAGE := CoreContract.SOURCE_KIND_PACKAGE
+const SUPPORTED_SOURCE_KINDS := [SOURCE_KIND_FILE, SOURCE_KIND_URL, SOURCE_KIND_PACKAGE]
 const VERIFIED_EXTENSIONS := ["ogv"]
 const UNVERIFIED_EXTENSIONS := ["mp4", "webm", "mov", "mkv", "avi"]
 const COVER_MODE_STRETCH := "stretch"
@@ -32,6 +33,7 @@ const DEFAULT_VIDEO_HEIGHT := 1080
 var _surface: Node = null
 var _player: Node = null
 var _player_factory: Callable = Callable()
+var _remote_source_resolver: Callable = Callable()
 var _stream_resource: Variant = null
 var _loaded_source: Dictionary = {}
 var _media_info: Dictionary = {}
@@ -47,6 +49,9 @@ var _cover_mode: String = DEFAULT_COVER_MODE
 
 func set_player_factory(factory: Callable) -> void:
 	_player_factory = factory
+
+func set_remote_source_resolver(resolver: Callable) -> void:
+	_remote_source_resolver = resolver
 
 func set_player_node(node: Node) -> void:
 	_player = node
@@ -80,19 +85,28 @@ func validate_source(source: Dictionary) -> Dictionary:
 	if str(source.get("path", "")).is_empty():
 		return {
 			"code": "backend_source_missing_path",
-			"message": "Video source path must be a non-empty local file path.",
+			"message": "Video source path must be a non-empty package path, local file path, or URL.",
 			"detail": {"field": "path", "source": source.duplicate(true)},
 		}
-	if str(source.get("kind", SOURCE_KIND_FILE)) != SOURCE_KIND_FILE:
+	var kind := str(source.get("kind", SOURCE_KIND_FILE))
+	if not SUPPORTED_SOURCE_KINDS.has(kind):
 		return {
 			"code": "backend_source_kind_unsupported",
-			"message": "Godot vendor backend currently supports only local file sources.",
+			"message": "Godot vendor backend currently supports package paths, local files, and direct URLs.",
 			"detail": {"field": "kind", "source": source.duplicate(true), "supported": SUPPORTED_SOURCE_KINDS.duplicate()},
 		}
-	if str(source.get("locality", "remote")) == "remote":
+	if kind == SOURCE_KIND_URL:
+		var lowered_path := str(source.get("path", "")).to_lower()
+		if not (lowered_path.begins_with("http://") or lowered_path.begins_with("https://")):
+			return {
+				"code": "backend_source_url_invalid",
+				"message": "Remote URL playback requires an http:// or https:// source.",
+				"detail": {"field": "path", "source": source.duplicate(true)},
+			}
+	elif str(source.get("locality", "remote")) == "remote":
 		return {
 			"code": "backend_source_not_local",
-			"message": "Godot vendor backend only accepts local file playback in this slice.",
+			"message": "Local file playback requires a project path, user path, relative package path, or absolute device path.",
 			"detail": {"field": "path", "source": source.duplicate(true)},
 		}
 	if float(source.get("rate", 1.0)) <= 0.0:
@@ -123,7 +137,7 @@ func get_capabilities() -> Dictionary:
 		"supported_source_kinds": SUPPORTED_SOURCE_KINDS.duplicate(),
 		"verified_extensions": VERIFIED_EXTENSIONS.duplicate(),
 		"unverified_extensions": UNVERIFIED_EXTENSIONS.duplicate(),
-		"remote_sources_supported": false,
+		"remote_sources_supported": true,
 		"surface_attach_mode": "direct_or_container_child",
 		"surface_types": ["VideoStreamPlayer", "Node", "CanvasItem", "Control"],
 		"audio_controls": ["mute_toggle", "audio_level"],
@@ -141,16 +155,30 @@ func load(source: Dictionary) -> Dictionary:
 			validation_error.get("detail", {})
 		)
 
-	var stream_resource: Variant = _load_stream_resource(str(normalized.get("path", "")))
+	var resolved_source := _resolve_source_for_loading(normalized)
+	if resolved_source.is_empty():
+		return _fail(
+			"backend_stream_load_failed",
+			"Godot could not resolve the requested video stream source.",
+			{"path": normalized.get("path", ""), "source": normalized.duplicate(true)}
+		)
+
+	var playback_path := str(resolved_source.get("path", "")).strip_edges()
+	var stream_resource: Variant = _load_stream_resource(playback_path)
 	if stream_resource == null:
 		return _fail(
 			"backend_stream_load_failed",
 			"Godot could not load the requested video stream resource.",
-			{"path": normalized.get("path", ""), "source": normalized.duplicate(true)}
+			{"path": normalized.get("path", ""), "resolved_path": playback_path, "source": normalized.duplicate(true)}
 		)
 
 	_stream_resource = stream_resource
 	_loaded_source = normalized.duplicate(true)
+	_loaded_source["resolved_path"] = playback_path
+	for key in resolved_source.keys():
+		if key == "path":
+			continue
+		_loaded_source[key] = resolved_source[key]
 	_loop_enabled = bool(_loaded_source.get("loop", false))
 	_rate = float(_loaded_source.get("rate", 1.0))
 	_cover_mode = _normalize_cover_mode(_loaded_source.get("cover_mode", DEFAULT_COVER_MODE))
@@ -412,6 +440,12 @@ func _infer_source_kind(path: String) -> String:
 	var lowered := path.to_lower()
 	if lowered.begins_with("http://") or lowered.begins_with("https://"):
 		return SOURCE_KIND_URL
+	if lowered.begins_with("res://") or lowered.begins_with("./") or lowered.begins_with("../"):
+		return SOURCE_KIND_PACKAGE
+	if lowered.begins_with("user://") or path.begins_with("/"):
+		return SOURCE_KIND_FILE
+	if not path.contains("://"):
+		return SOURCE_KIND_PACKAGE
 	return SOURCE_KIND_FILE
 
 func _normalize_file_uri(path: String) -> String:
@@ -435,6 +469,160 @@ func _detect_locality(path: String) -> String:
 		return "remote"
 	return "relative_path"
 
+func _resolve_source_for_loading(source: Dictionary) -> Dictionary:
+	var kind := str(source.get("kind", SOURCE_KIND_FILE))
+	var requested_path := str(source.get("path", "")).strip_edges()
+	if kind == SOURCE_KIND_URL:
+		var remote_path := _resolve_remote_stream_source(requested_path)
+		if remote_path.is_empty():
+			return {}
+		return {
+			"path": remote_path,
+			"resolved_kind": SOURCE_KIND_FILE,
+			"resolved_locality": "remote_cache",
+			"cache_path": remote_path,
+		}
+	var local_path := _resolve_local_stream_source(requested_path)
+	if local_path.is_empty():
+		return {}
+	return {
+		"path": local_path,
+		"resolved_kind": SOURCE_KIND_FILE if kind != SOURCE_KIND_PACKAGE else SOURCE_KIND_PACKAGE,
+		"resolved_locality": _detect_locality(local_path),
+	}
+
+func _resolve_local_stream_source(path: String) -> String:
+	var trimmed := path.strip_edges()
+	if trimmed.is_empty():
+		return ""
+	if trimmed.begins_with("res://") or trimmed.begins_with("user://") or trimmed.begins_with("/"):
+		return trimmed
+	var normalized_relative := trimmed
+	if normalized_relative.begins_with("./"):
+		normalized_relative = normalized_relative.substr(2)
+	while normalized_relative.begins_with("/"):
+		normalized_relative = normalized_relative.substr(1)
+	if normalized_relative.is_empty():
+		return ""
+	var res_candidate := "res://%s" % normalized_relative
+	if ResourceLoader.exists(res_candidate) or FileAccess.file_exists(ProjectSettings.globalize_path(res_candidate)):
+		return res_candidate
+	var user_candidate := "user://%s" % normalized_relative
+	if FileAccess.file_exists(ProjectSettings.globalize_path(user_candidate)):
+		return user_candidate
+	return trimmed
+
+func _resolve_remote_stream_source(url: String) -> String:
+	if _remote_source_resolver.is_valid():
+		var resolved: Variant = _remote_source_resolver.call(url)
+		if typeof(resolved) == TYPE_DICTIONARY:
+			return str((resolved as Dictionary).get("path", "")).strip_edges()
+		return str(resolved).strip_edges()
+	return _download_remote_stream_to_cache(url)
+
+func _download_remote_stream_to_cache(url: String) -> String:
+	var request := _parse_http_url(url)
+	if request.is_empty():
+		return ""
+	var client := HTTPClient.new()
+	var use_tls := bool(request.get("tls", false))
+	var connect_error := client.connect_to_host(str(request.get("host", "")), int(request.get("port", 0)), TLSOptions.client() if use_tls else null)
+	if connect_error != OK:
+		return ""
+	if not _http_client_wait_for(client, [HTTPClient.STATUS_CONNECTED]):
+		return ""
+	var request_error := client.request(HTTPClient.METHOD_GET, str(request.get("request_path", "/")), ["User-Agent: AeroBeatVendorGodotVideo/0.5.0", "Accept: application/ogg, application/octet-stream"])
+	if request_error != OK:
+		return ""
+	var body := PackedByteArray()
+	var deadline := Time.get_ticks_msec() + 15000
+	while Time.get_ticks_msec() <= deadline:
+		var poll_error := client.poll()
+		if poll_error != OK:
+			return ""
+		var status := client.get_status()
+		if status == HTTPClient.STATUS_BODY:
+			var chunk := client.read_response_body_chunk()
+			if not chunk.is_empty():
+				body.append_array(chunk)
+		elif status == HTTPClient.STATUS_CONNECTED:
+			if client.has_response():
+				var response_code := client.get_response_code()
+				if response_code < 200 or response_code >= 300:
+					return ""
+				if body.is_empty():
+					return ""
+				return _write_remote_cache_file(url, body)
+		elif status in [HTTPClient.STATUS_CANT_CONNECT, HTTPClient.STATUS_CANT_RESOLVE, HTTPClient.STATUS_CONNECTION_ERROR, HTTPClient.STATUS_TLS_HANDSHAKE_ERROR, HTTPClient.STATUS_DISCONNECTED]:
+			return ""
+		OS.delay_msec(10)
+	return ""
+
+func _http_client_wait_for(client: HTTPClient, statuses: Array) -> bool:
+	var deadline := Time.get_ticks_msec() + 5000
+	while Time.get_ticks_msec() <= deadline:
+		var poll_error := client.poll()
+		if poll_error != OK:
+			return false
+		if statuses.has(client.get_status()):
+			return true
+		if client.get_status() in [HTTPClient.STATUS_CANT_CONNECT, HTTPClient.STATUS_CANT_RESOLVE, HTTPClient.STATUS_CONNECTION_ERROR, HTTPClient.STATUS_TLS_HANDSHAKE_ERROR, HTTPClient.STATUS_DISCONNECTED]:
+			return false
+		OS.delay_msec(10)
+	return false
+
+func _parse_http_url(url: String) -> Dictionary:
+	var trimmed := url.strip_edges()
+	if trimmed.is_empty() or not trimmed.contains("://"):
+		return {}
+	var scheme_split := trimmed.split("://", false, 1)
+	if scheme_split.size() != 2:
+		return {}
+	var scheme := str(scheme_split[0]).to_lower()
+	if scheme not in ["http", "https"]:
+		return {}
+	var remainder := str(scheme_split[1])
+	var slash_index := remainder.find("/")
+	var host_port := remainder if slash_index < 0 else remainder.substr(0, slash_index)
+	var request_path := "/" if slash_index < 0 else remainder.substr(slash_index)
+	if host_port.is_empty():
+		return {}
+	var host := host_port
+	var port := 443 if scheme == "https" else 80
+	if host_port.contains(":"):
+		var port_split := host_port.rsplit(":", false, 1)
+		if port_split.size() == 2 and str(port_split[1]).is_valid_int():
+			host = str(port_split[0])
+			port = int(port_split[1])
+	return {
+		"scheme": scheme,
+		"host": host,
+		"port": port,
+		"request_path": request_path,
+		"tls": scheme == "https",
+	}
+
+func _write_remote_cache_file(url: String, body: PackedByteArray) -> String:
+	if body.is_empty():
+		return ""
+	var cache_dir := ProjectSettings.globalize_path("user://aero_godot_video_cache")
+	var mkdir_error := DirAccess.make_dir_recursive_absolute(cache_dir)
+	if mkdir_error != OK and not DirAccess.dir_exists_absolute(cache_dir):
+		return ""
+	var lowered := url.to_lower()
+	var extension := url.get_extension().to_lower()
+	if extension.is_empty() and lowered.contains(".ogv?"):
+		extension = "ogv"
+	if extension != "ogv":
+		return ""
+	var cache_path := cache_dir.path_join("remote-%s.%s" % [str(abs(hash(url))), extension])
+	var file := FileAccess.open(cache_path, FileAccess.WRITE)
+	if file == null:
+		return ""
+	file.store_buffer(body)
+	file.flush()
+	return cache_path
+
 func _build_media_info(source: Dictionary) -> Dictionary:
 	var extension := str(source.get("extension", "")).to_lower()
 	var format_status := "unknown"
@@ -444,6 +632,7 @@ func _build_media_info(source: Dictionary) -> Dictionary:
 		format_status = "unverified"
 	return {
 		"path": str(source.get("path", "")),
+		"resolved_path": str(source.get("resolved_path", source.get("path", ""))),
 		"kind": str(source.get("kind", SOURCE_KIND_FILE)),
 		"vendor": VENDOR_NAME,
 		"backend_family": BACKEND_FAMILY,
