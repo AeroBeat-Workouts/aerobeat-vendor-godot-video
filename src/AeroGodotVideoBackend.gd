@@ -20,6 +20,14 @@ const DEFAULT_MUTED_VOLUME := 0.0
 const DEFAULT_UNMUTED_VOLUME := 1.0
 const DEFAULT_MUTED_VOLUME_DB := -80.0
 const DEFAULT_UNMUTED_VOLUME_DB := 0.0
+const COVER_MODE_STRETCH := "stretch"
+const COVER_MODE_CONTAIN := "contain"
+const COVER_MODE_COVER := "cover"
+const COVER_MODES := [COVER_MODE_STRETCH, COVER_MODE_CONTAIN, COVER_MODE_COVER]
+const DEFAULT_COVER_MODE := COVER_MODE_CONTAIN
+const DEFAULT_AUDIO_LEVEL := 1.0
+const DEFAULT_VIDEO_WIDTH := 1920
+const DEFAULT_VIDEO_HEIGHT := 1080
 
 var _surface: Node = null
 var _player: Node = null
@@ -34,6 +42,8 @@ var _duration_seconds: float = 0.0
 var _loop_enabled: bool = false
 var _rate: float = 1.0
 var _muted: bool = false
+var _cover_mode: String = DEFAULT_COVER_MODE
+var _audio_level: float = DEFAULT_AUDIO_LEVEL
 
 func set_player_factory(factory: Callable) -> void:
 	_player_factory = factory
@@ -60,6 +70,10 @@ func normalize_source(source: Dictionary) -> Dictionary:
 	normalized["locality"] = _detect_locality(str(normalized.get("path", "")))
 	normalized["is_local_file"] = normalized["kind"] == SOURCE_KIND_FILE and str(normalized.get("locality", "")) != "remote"
 	normalized["extension"] = str(normalized.get("path", "")).get_extension().to_lower()
+	normalized["cover_mode"] = _normalize_cover_mode(String(normalized.get("cover_mode", DEFAULT_COVER_MODE)))
+	normalized["audio_level"] = _normalize_audio_level(float(normalized.get("audio_level", DEFAULT_AUDIO_LEVEL)))
+	normalized["width"] = max(1, int(normalized.get("width", DEFAULT_VIDEO_WIDTH)))
+	normalized["height"] = max(1, int(normalized.get("height", DEFAULT_VIDEO_HEIGHT)))
 	return normalized
 
 func validate_source(source: Dictionary) -> Dictionary:
@@ -99,8 +113,9 @@ func get_capabilities() -> Dictionary:
 		"remote_sources_supported": false,
 		"surface_attach_mode": "direct_or_container_child",
 		"surface_types": ["VideoStreamPlayer", "Node", "CanvasItem", "Control"],
-		"audio_controls": ["mute_toggle"],
-		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status", "audio"],
+		"audio_controls": ["mute_toggle", "audio_level"],
+		"cover_modes": COVER_MODES.duplicate(),
+		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status", "cover_mode", "audio", "width", "height"],
 	}
 
 func load(source: Dictionary) -> Dictionary:
@@ -125,6 +140,8 @@ func load(source: Dictionary) -> Dictionary:
 	_loaded_source = normalized.duplicate(true)
 	_loop_enabled = bool(_loaded_source.get("loop", false))
 	_rate = float(_loaded_source.get("rate", 1.0))
+	_cover_mode = _normalize_cover_mode(String(_loaded_source.get("cover_mode", DEFAULT_COVER_MODE)))
+	_audio_level = _normalize_audio_level(float(_loaded_source.get("audio_level", DEFAULT_AUDIO_LEVEL)))
 	_position_seconds = float(_loaded_source.get("start_time", 0.0))
 	_duration_seconds = maxf(_position_seconds, float(_loaded_source.get("duration_hint", 0.0)))
 	_media_info = _build_media_info(_loaded_source)
@@ -207,22 +224,37 @@ func set_rate(rate: float) -> Dictionary:
 	_last_error = {}
 	return _ok({"rate": _rate, "applied_to_player": applied_to_player})
 
+func set_cover_mode(cover_mode: String) -> Dictionary:
+	_cover_mode = _normalize_cover_mode(cover_mode)
+	if not _loaded_source.is_empty():
+		_loaded_source["cover_mode"] = _cover_mode
+	_apply_cover_layout()
+	_last_error = {}
+	return _ok({"cover_mode": _cover_mode, "applied_to_player": _player != null})
+
+func set_audio_level(audio_level: float) -> Dictionary:
+	_audio_level = _normalize_audio_level(audio_level)
+	if not _loaded_source.is_empty():
+		_loaded_source["audio_level"] = _audio_level
+	var applied := _apply_audio_configuration()
+	_last_error = {}
+	return _ok({"audio": get_audio_state(), "applied_to_player": applied})
+
 func set_muted(muted: bool) -> Dictionary:
 	_muted = muted
-	var applied := false
-	if _player_supports_property("volume"):
-		applied = _set_player_property("volume", DEFAULT_MUTED_VOLUME if muted else DEFAULT_UNMUTED_VOLUME)
-	elif _player_supports_property("volume_db"):
-		applied = _set_player_property("volume_db", DEFAULT_MUTED_VOLUME_DB if muted else DEFAULT_UNMUTED_VOLUME_DB)
+	var applied := _apply_audio_configuration()
 	_last_error = {}
 	return _ok({"audio": get_audio_state(), "applied_to_player": applied})
 
 func get_audio_state() -> Dictionary:
+	var effective_audio_level := 0.0 if _muted else _audio_level
 	var audio := {
 		"muted": _muted,
 		"player_present": _player != null,
-		"volume": DEFAULT_UNMUTED_VOLUME,
-		"volume_db": DEFAULT_UNMUTED_VOLUME_DB,
+		"audio_level": _audio_level,
+		"effective_audio_level": effective_audio_level,
+		"volume": effective_audio_level,
+		"volume_db": _linear_to_volume_db(effective_audio_level),
 	}
 	if _player != null:
 		if _player_supports_property("volume"):
@@ -245,6 +277,7 @@ func get_media_info() -> Dictionary:
 	if info.is_empty() and not _loaded_source.is_empty():
 		info = _build_media_info(_loaded_source)
 	info["audio"] = get_audio_state()
+	info["cover_mode"] = _cover_mode
 	return info
 
 func attach_surface(node: Node) -> Dictionary:
@@ -316,6 +349,8 @@ func translate_backend_state(raw_state: Dictionary = {}) -> Dictionary:
 		"duration": _duration_seconds,
 		"loop": _loop_enabled,
 		"rate": _rate,
+		"cover_mode": _cover_mode,
+		"audio_level": _audio_level,
 		"audio": get_audio_state(),
 		"last_error": _last_error.duplicate(true),
 		"source": _loaded_source.duplicate(true),
@@ -380,9 +415,13 @@ func _build_media_info(source: Dictionary) -> Dictionary:
 		"surface_attached": _surface != null,
 		"loop": _loop_enabled,
 		"rate": _rate,
+		"cover_mode": _cover_mode,
+		"width": int(source.get("width", DEFAULT_VIDEO_WIDTH)),
+		"height": int(source.get("height", DEFAULT_VIDEO_HEIGHT)),
 		"audio": get_audio_state(),
 		"metadata": source.get("metadata", {}).duplicate(true),
 	}
+
 
 func _load_stream_resource(path: String) -> Variant:
 	var candidate_path := path
@@ -454,8 +493,8 @@ func _sync_player_configuration() -> void:
 	_set_player_property("stream_position", _position_seconds)
 	if _player_supports_property("playback_speed"):
 		_set_player_property("playback_speed", _rate)
-	if _muted:
-		set_muted(_muted)
+	_apply_audio_configuration()
+	_apply_cover_layout()
 	if _player.has_method("apply_source_descriptor") and not _loaded_source.is_empty():
 		_player.call("apply_source_descriptor", _loaded_source.duplicate(true))
 
@@ -467,6 +506,8 @@ func _snapshot_player_state() -> Dictionary:
 		"duration": _duration_seconds,
 		"loop": _loop_enabled,
 		"rate": _rate,
+		"cover_mode": _cover_mode,
+		"audio_level": _audio_level,
 		"audio": get_audio_state(),
 	}
 	if _player != null:
@@ -485,6 +526,64 @@ func _snapshot_player_state() -> Dictionary:
 		raw["playing"] = _is_player_playing(raw)
 		raw["player_name"] = str(_player.name)
 	return raw
+
+
+func _normalize_cover_mode(cover_mode: String) -> String:
+	var normalized := cover_mode.strip_edges().to_lower()
+	return normalized if COVER_MODES.has(normalized) else DEFAULT_COVER_MODE
+
+func _normalize_audio_level(audio_level: float) -> float:
+	return clampf(audio_level, 0.0, 1.0)
+
+func _apply_audio_configuration() -> bool:
+	var effective_audio_level := 0.0 if _muted else _audio_level
+	var applied := false
+	if _player_supports_property("volume"):
+		applied = _set_player_property("volume", effective_audio_level)
+	if _player_supports_property("volume_db"):
+		applied = _set_player_property("volume_db", _linear_to_volume_db(effective_audio_level)) or applied
+	if _player_supports_property("audio_level"):
+		applied = _set_player_property("audio_level", _audio_level) or applied
+	return applied
+
+func _linear_to_volume_db(level: float) -> float:
+	if level <= 0.0:
+		return DEFAULT_MUTED_VOLUME_DB
+	return linear_to_db(level)
+
+func _apply_cover_layout() -> void:
+	if _player == null:
+		return
+	if _player_supports_property("cover_mode"):
+		_set_player_property("cover_mode", _cover_mode)
+	if _surface is Control:
+		(_surface as Control).clip_contents = _cover_mode == COVER_MODE_COVER
+	if not (_surface is Control and _player is Control):
+		return
+	var surface_control := _surface as Control
+	var player_control := _player as Control
+	player_control.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	var surface_size := surface_control.size
+	if surface_size.x <= 0.0 or surface_size.y <= 0.0:
+		surface_size = surface_control.custom_minimum_size
+	if surface_size.x <= 0.0 or surface_size.y <= 0.0:
+		surface_size = Vector2(DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT)
+	var video_size := Vector2(
+		maxf(1.0, float(_media_info.get("width", _loaded_source.get("width", DEFAULT_VIDEO_WIDTH)))),
+		maxf(1.0, float(_media_info.get("height", _loaded_source.get("height", DEFAULT_VIDEO_HEIGHT))))
+	)
+	var target_size := surface_size
+	match _cover_mode:
+		COVER_MODE_STRETCH:
+			target_size = surface_size
+		COVER_MODE_CONTAIN:
+			var contain_scale := minf(surface_size.x / video_size.x, surface_size.y / video_size.y)
+			target_size = video_size * contain_scale
+		COVER_MODE_COVER:
+			var cover_scale := maxf(surface_size.x / video_size.x, surface_size.y / video_size.y)
+			target_size = video_size * cover_scale
+	player_control.position = (surface_size - target_size) * 0.5
+	player_control.size = target_size
 
 func _player_supports_property(property_name: String) -> bool:
 	return _object_supports_property(_player, property_name)

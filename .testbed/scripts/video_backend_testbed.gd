@@ -4,17 +4,26 @@ const FACTORY_SCRIPT := preload("res://addons/aerobeat-vendor-godot-video/src/Ae
 const SAMPLE_VIDEO_PATH := "res://assets/videos/calm_blue_sea_1.ogv"
 const BAD_VIDEO_PATH := "res://assets/videos/does_not_exist.ogv"
 const SLOT_NAMES := ["primary", "secondary"]
+const COVER_MODES := [
+	AeroVideoPlayerManager.COVER_MODE_STRETCH,
+	AeroVideoPlayerManager.COVER_MODE_CONTAIN,
+	AeroVideoPlayerManager.COVER_MODE_COVER,
+]
 const SLOT_DEFAULTS := {
 	"primary": {
 		"start_time": 0.0,
 		"duration_hint": 12.0,
 		"loop": false,
+		"cover_mode": AeroVideoPlayerManager.COVER_MODE_CONTAIN,
+		"audio_level": 1.0,
 		"label": "Primary slot",
 	},
 	"secondary": {
 		"start_time": 3.0,
 		"duration_hint": 24.0,
 		"loop": true,
+		"cover_mode": AeroVideoPlayerManager.COVER_MODE_COVER,
+		"audio_level": 0.6,
 		"label": "Secondary slot",
 	},
 }
@@ -23,6 +32,8 @@ var _factory: AeroGodotVideoBackendFactory
 var _slot_bank: AeroGodotVideoSlotBank
 var _slot_widgets: Dictionary = {}
 var _summary_label: Label
+var _cover_syncing := {}
+var _audio_syncing := {}
 
 func _ready() -> void:
 	_build_ui()
@@ -34,8 +45,11 @@ func _ready() -> void:
 	_slot_bank.slot_error_raised.connect(_on_slot_error_raised)
 	_slot_bank.slot_position_changed.connect(_on_slot_position_changed)
 	for slot_name in SLOT_NAMES:
+		_cover_syncing[slot_name] = false
+		_audio_syncing[slot_name] = false
 		var surface: Control = _slot_widgets[slot_name]["surface"]
 		_slot_bank.create_slot_manager(slot_name, surface)
+		_apply_slot_defaults(slot_name)
 		_load_slot_sample(slot_name)
 	set_process(true)
 	_refresh_all_labels()
@@ -57,11 +71,11 @@ func _build_ui() -> void:
 	margin.add_child(root)
 
 	var title := Label.new()
-	title.text = "AeroGodotVideoBackend multi-slot + loop proving surface"
+	title.text = "AeroGodotVideoBackend multi-slot + cover/audio proving surface"
 	root.add_child(title)
 
 	_summary_label = Label.new()
-	_summary_label.text = "Two independent video slots, shared sample asset, separate loop/audio/playback controls."
+	_summary_label.text = "Two independent video slots, shared sample asset, separate loop/cover/audio/playback controls."
 	root.add_child(_summary_label)
 
 	var slots_row := HBoxContainer.new()
@@ -76,7 +90,7 @@ func _build_ui() -> void:
 func _build_slot_panel(slot_name: String) -> Control:
 	var config: Dictionary = SLOT_DEFAULTS.get(slot_name, {})
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(520, 680)
+	panel.custom_minimum_size = Vector2(520, 760)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
@@ -105,11 +119,11 @@ func _build_slot_panel(slot_name: String) -> Control:
 
 	var detail_label := Label.new()
 	detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	detail_label.text = "Position: 0.00 / 0.00 | Loop: false | Format: unknown | Surface: false"
+	detail_label.text = "Position: 0.00 / 0.00 | Loop: false | Cover: contain | Format: unknown | Surface: false"
 	column.add_child(detail_label)
 
 	var audio_label := Label.new()
-	audio_label.text = "Audio: unmuted"
+	audio_label.text = "Audio: 100% | unmuted"
 	column.add_child(audio_label)
 
 	var surface_panel := PanelContainer.new()
@@ -122,6 +136,37 @@ func _build_slot_panel(slot_name: String) -> Control:
 	surface.set_anchors_preset(Control.PRESET_FULL_RECT)
 	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	surface_panel.add_child(surface)
+
+	var config_row := HBoxContainer.new()
+	config_row.add_theme_constant_override("separation", 8)
+	column.add_child(config_row)
+
+	var cover_label := Label.new()
+	cover_label.text = "Cover"
+	config_row.add_child(cover_label)
+
+	var cover_option := OptionButton.new()
+	cover_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for cover_mode in COVER_MODES:
+		cover_option.add_item(_cover_mode_label(cover_mode))
+	cover_option.item_selected.connect(_on_cover_selected.bind(slot_name))
+	config_row.add_child(cover_option)
+
+	var audio_caption := Label.new()
+	audio_caption.text = "Audio"
+	config_row.add_child(audio_caption)
+
+	var audio_slider := HSlider.new()
+	audio_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	audio_slider.min_value = 0.0
+	audio_slider.max_value = 1.0
+	audio_slider.step = 0.01
+	audio_slider.value_changed.connect(_on_audio_slider_changed.bind(slot_name))
+	config_row.add_child(audio_slider)
+
+	var audio_value_label := Label.new()
+	audio_value_label.text = "100%"
+	config_row.add_child(audio_value_label)
 
 	var row_one := HBoxContainer.new()
 	row_one.add_theme_constant_override("separation", 8)
@@ -148,6 +193,9 @@ func _build_slot_panel(slot_name: String) -> Control:
 		"detail_label": detail_label,
 		"audio_label": audio_label,
 		"surface": surface,
+		"cover_option": cover_option,
+		"audio_slider": audio_slider,
+		"audio_value_label": audio_value_label,
 		"mute_button": mute_button,
 		"loop_button": loop_button,
 	}
@@ -159,6 +207,22 @@ func _make_button(slot_name: String, text: String, action: String) -> Button:
 	button.pressed.connect(_on_slot_button_pressed.bind(slot_name, action))
 	return button
 
+func _apply_slot_defaults(slot_name: String) -> void:
+	var config: Dictionary = SLOT_DEFAULTS.get(slot_name, {})
+	var widget: Dictionary = _slot_widgets.get(slot_name, {})
+	var cover_option: OptionButton = widget.get("cover_option", null)
+	var audio_slider: HSlider = widget.get("audio_slider", null)
+	if cover_option != null:
+		_cover_syncing[slot_name] = true
+		cover_option.select(_cover_mode_index(String(config.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE))))
+		_cover_syncing[slot_name] = false
+	if audio_slider != null:
+		_audio_syncing[slot_name] = true
+		audio_slider.value = float(config.get("audio_level", 1.0))
+		_audio_syncing[slot_name] = false
+	_slot_bank.set_slot_cover_mode(slot_name, String(config.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE)))
+	_slot_bank.set_slot_audio_level(slot_name, float(config.get("audio_level", 1.0)))
+
 func _on_slot_button_pressed(slot_name: String, action: String) -> void:
 	match action:
 		"load_sample":
@@ -168,7 +232,11 @@ func _on_slot_button_pressed(slot_name: String, action: String) -> void:
 			var path_label: Label = widget.get("path_label", null)
 			if path_label != null:
 				path_label.text = BAD_VIDEO_PATH
-			_slot_bank.load_slot(slot_name, {"path": BAD_VIDEO_PATH})
+			_slot_bank.load_slot(slot_name, {
+				"path": BAD_VIDEO_PATH,
+				"cover_mode": _selected_cover_mode(slot_name),
+				"audio_level": _selected_audio_level(slot_name),
+			})
 		"play", "resume":
 			_slot_bank.play_slot(slot_name)
 		"pause":
@@ -199,6 +267,8 @@ func _load_slot_sample(slot_name: String) -> void:
 		"start_time": float(config.get("start_time", 0.0)),
 		"duration_hint": float(config.get("duration_hint", 12.0)),
 		"loop": bool(config.get("loop", false)),
+		"cover_mode": _selected_cover_mode(slot_name),
+		"audio_level": _selected_audio_level(slot_name),
 		"metadata": {
 			"source": "vendor_backend_testbed",
 			"slot": slot_name,
@@ -215,8 +285,14 @@ func _refresh_summary_label() -> void:
 	var parts: Array[String] = []
 	for slot_name in SLOT_NAMES:
 		var state := _slot_bank.get_slot_state(slot_name) if _slot_bank != null else {}
-		parts.append("%s=%s(loop=%s)" % [slot_name, str(state.get("state", "idle")), str(state.get("loop", false))])
-	_summary_label.text = "Two independent video slots, shared sample asset, separate loop/audio/playback controls. %s" % " | ".join(parts)
+		parts.append("%s=%s(loop=%s cover=%s audio=%s)" % [
+			slot_name,
+			str(state.get("state", "idle")),
+			str(state.get("loop", false)),
+			str(state.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE)),
+			_format_audio_level(float(state.get("audio_level", 1.0))),
+		])
+	_summary_label.text = "Two independent video slots, shared sample asset, separate loop/cover/audio/playback controls. %s" % " | ".join(parts)
 
 func _refresh_slot_labels(slot_name: String) -> void:
 	var widget: Dictionary = _slot_widgets.get(slot_name, {})
@@ -225,34 +301,98 @@ func _refresh_slot_labels(slot_name: String) -> void:
 	var state: Dictionary = _slot_bank.get_slot_state(slot_name)
 	var media_info: Dictionary = _slot_bank.get_slot_media_info(slot_name)
 	var backend: Variant = _get_slot_backend(slot_name)
-	var audio_state: Dictionary = backend.get_audio_state() if backend != null and backend.has_method("get_audio_state") else {"muted": false}
+	var audio_state: Dictionary = backend.get_audio_state() if backend != null and backend.has_method("get_audio_state") else {"muted": false, "audio_level": float(state.get("audio_level", 1.0))}
 	var status_label: Label = widget.get("status_label", null)
 	var detail_label: Label = widget.get("detail_label", null)
 	var audio_label: Label = widget.get("audio_label", null)
 	var mute_button: Button = widget.get("mute_button", null)
 	var loop_button: Button = widget.get("loop_button", null)
+	var cover_option: OptionButton = widget.get("cover_option", null)
+	var audio_slider: HSlider = widget.get("audio_slider", null)
+	var audio_value_label: Label = widget.get("audio_value_label", null)
 	if status_label != null:
 		status_label.text = "State: %s" % str(state.get("state", "idle"))
 	if detail_label != null:
-		detail_label.text = "Position: %.2f / %.2f | Loop: %s | Format: %s | Surface: %s" % [
+		detail_label.text = "Position: %.2f / %.2f | Loop: %s | Cover: %s | Format: %s | Surface: %s" % [
 			float(state.get("position", 0.0)),
 			float(state.get("duration", 0.0)),
 			str(state.get("loop", false)),
+			str(state.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE)),
 			str(media_info.get("format_status", "unknown")),
 			str(state.get("surface_attached", false)),
 		]
+	var displayed_audio_level := float(audio_state.get("audio_level", state.get("audio_level", 1.0)))
 	if audio_label != null:
-		audio_label.text = "Audio: %s" % ("muted" if bool(audio_state.get("muted", false)) else "unmuted")
+		audio_label.text = "Audio: %s | %s" % [
+			_format_audio_level(displayed_audio_level),
+			"muted" if bool(audio_state.get("muted", false)) else "unmuted",
+		]
 	if mute_button != null:
 		mute_button.text = "Unmute" if bool(audio_state.get("muted", false)) else "Mute"
 	if loop_button != null:
 		loop_button.text = "Loop: %s" % ("on" if bool(state.get("loop", false)) else "off")
+	if cover_option != null:
+		_cover_syncing[slot_name] = true
+		cover_option.select(_cover_mode_index(String(state.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE))))
+		_cover_syncing[slot_name] = false
+	if audio_slider != null:
+		_audio_syncing[slot_name] = true
+		audio_slider.value = float(state.get("audio_level", 1.0))
+		_audio_syncing[slot_name] = false
+	if audio_value_label != null:
+		audio_value_label.text = _format_audio_level(float(state.get("audio_level", 1.0)))
 
 func _get_slot_backend(slot_name: String) -> Variant:
 	var manager: Variant = _slot_bank.get_slot_manager(slot_name) if _slot_bank != null else null
 	if manager == null or not manager.has_method("get_backend"):
 		return null
 	return manager.get_backend()
+
+func _cover_mode_index(cover_mode: String) -> int:
+	var normalized := String(cover_mode).strip_edges().to_lower()
+	var index := COVER_MODES.find(normalized)
+	return index if index >= 0 else COVER_MODES.find(AeroVideoPlayerManager.DEFAULT_COVER_MODE)
+
+func _cover_mode_label(cover_mode: String) -> String:
+	match cover_mode:
+		AeroVideoPlayerManager.COVER_MODE_STRETCH:
+			return "Stretch"
+		AeroVideoPlayerManager.COVER_MODE_COVER:
+			return "Cover"
+		_:
+			return "Contain"
+
+func _selected_cover_mode(slot_name: String) -> String:
+	var option: OptionButton = _slot_widgets.get(slot_name, {}).get("cover_option", null)
+	if option == null:
+		return AeroVideoPlayerManager.DEFAULT_COVER_MODE
+	var selected := option.selected
+	if selected < 0 or selected >= COVER_MODES.size():
+		return AeroVideoPlayerManager.DEFAULT_COVER_MODE
+	return COVER_MODES[selected]
+
+func _selected_audio_level(slot_name: String) -> float:
+	var slider: HSlider = _slot_widgets.get(slot_name, {}).get("audio_slider", null)
+	return float(slider.value) if slider != null else 1.0
+
+func _format_audio_level(audio_level: float) -> String:
+	return "%d%%" % int(round(clampf(audio_level, 0.0, 1.0) * 100.0))
+
+func _on_cover_selected(_index: int, slot_name: String) -> void:
+	if bool(_cover_syncing.get(slot_name, false)):
+		return
+	_slot_bank.set_slot_cover_mode(slot_name, _selected_cover_mode(slot_name))
+	_refresh_slot_labels(slot_name)
+
+func _on_audio_slider_changed(value: float, slot_name: String) -> void:
+	var widget: Dictionary = _slot_widgets.get(slot_name, {})
+	var audio_value_label: Label = widget.get("audio_value_label", null)
+	if audio_value_label != null:
+		audio_value_label.text = _format_audio_level(value)
+	if bool(_audio_syncing.get(slot_name, false)):
+		return
+	_slot_bank.set_slot_audio_level(slot_name, value)
+	_refresh_slot_labels(slot_name)
 
 func _on_slot_state_changed(slot_name: String, _state: String, _detail: Dictionary) -> void:
 	_refresh_slot_labels(slot_name)

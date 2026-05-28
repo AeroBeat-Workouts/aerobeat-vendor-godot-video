@@ -62,7 +62,8 @@ func attach_slot_surface(slot_name: String, surface: Node) -> Dictionary:
 	if surface == null:
 		return _fail(normalized_slot, "video_invalid_surface", "Cannot attach a null output surface.")
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.attach_surface(surface)
+	manager.attach_surface(surface, normalized_slot)
+	manager.set_active_slot(normalized_slot)
 	var entry: Dictionary = _slot_entries.get(normalized_slot, {}).duplicate(true)
 	entry["surface"] = surface
 	_slot_entries[normalized_slot] = entry
@@ -76,7 +77,8 @@ func detach_slot_surface(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 	var manager := get_slot_manager(normalized_slot)
 	if manager == null:
 		return _ok(normalized_slot, {"attached": false})
-	manager.detach_surface()
+	manager.detach_surface(normalized_slot)
+	manager.set_active_slot(normalized_slot)
 	var entry: Dictionary = _slot_entries.get(normalized_slot, {}).duplicate(true)
 	entry["surface"] = null
 	_slot_entries[normalized_slot] = entry
@@ -88,25 +90,29 @@ func detach_slot_surface(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 func load_slot(slot_name: String, source: Dictionary) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.load(source)
+	manager.set_active_slot(normalized_slot)
+	manager.load(source, normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func play_slot(slot_name: String) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.play()
+	manager.set_active_slot(normalized_slot)
+	manager.play(normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func pause_slot(slot_name: String) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.pause()
+	manager.set_active_slot(normalized_slot)
+	manager.pause(normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func stop_slot(slot_name: String) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.stop()
+	manager.set_active_slot(normalized_slot)
+	manager.stop(normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func unload_slot(slot_name: String) -> Dictionary:
@@ -114,31 +120,50 @@ func unload_slot(slot_name: String) -> Dictionary:
 	var manager := get_slot_manager(normalized_slot)
 	if manager == null:
 		return _ok(normalized_slot, {"unloaded": true, "created": false})
-	manager.unload()
+	manager.set_active_slot(normalized_slot)
+	manager.unload(normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func seek_slot(slot_name: String, seconds: float) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.seek(seconds)
+	manager.set_active_slot(normalized_slot)
+	manager.seek(seconds, normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func set_slot_loop(slot_name: String, enabled: bool) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.set_loop(enabled)
+	manager.set_active_slot(normalized_slot)
+	manager.set_loop(enabled, normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func set_slot_rate(slot_name: String, rate: float) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.set_rate(rate)
+	manager.set_active_slot(normalized_slot)
+	manager.set_rate(rate, normalized_slot)
+	return _snapshot_slot_result(normalized_slot)
+
+func set_slot_cover_mode(slot_name: String, cover_mode: String) -> Dictionary:
+	var normalized_slot := _normalize_slot_name(slot_name)
+	var manager := _ensure_slot_manager(normalized_slot)
+	manager.set_active_slot(normalized_slot)
+	manager.set_cover_mode(cover_mode, normalized_slot)
+	return _snapshot_slot_result(normalized_slot)
+
+func set_slot_audio_level(slot_name: String, audio_level: float) -> Dictionary:
+	var normalized_slot := _normalize_slot_name(slot_name)
+	var manager := _ensure_slot_manager(normalized_slot)
+	manager.set_active_slot(normalized_slot)
+	manager.set_audio_level(audio_level, normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func set_slot_muted(slot_name: String, muted: bool) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
-	var backend: Variant = manager.get_backend() if manager.has_method("get_backend") else null
+	manager.set_active_slot(normalized_slot)
+	var backend: Variant = manager.get_backend(normalized_slot) if manager.has_method("get_backend") else null
 	if backend == null or not backend.has_method("set_muted"):
 		return _fail(normalized_slot, "backend_audio_control_unavailable", "Slot backend does not expose vendor-local mute control.")
 	var result: Dictionary = backend.set_muted(muted)
@@ -146,30 +171,34 @@ func set_slot_muted(slot_name: String, muted: bool) -> Dictionary:
 		return _ok(normalized_slot, {
 			"muted": muted,
 			"audio": backend.get_audio_state() if backend.has_method("get_audio_state") else {},
-			"state": manager.get_state() if manager.has_method("get_state") else {},
-			"media_info": manager.get_media_info() if manager.has_method("get_media_info") else {},
+			"state": manager.get_state(normalized_slot) if manager.has_method("get_state") else {},
+			"media_info": manager.get_media_info(normalized_slot) if manager.has_method("get_media_info") else {},
 		})
 	return _fail(normalized_slot, str(result.get("code", "backend_audio_control_failed")), str(result.get("message", "Slot backend failed to update mute state.")), result.get("detail", {}))
 
 func get_slot_state(slot_name: String = DEFAULT_SLOT) -> Dictionary:
-	var manager := get_slot_manager(slot_name)
+	var normalized_slot := _normalize_slot_name(slot_name)
+	var manager := get_slot_manager(normalized_slot)
 	if manager == null:
 		return {}
-	return manager.get_state().duplicate(true)
+	manager.set_active_slot(normalized_slot)
+	return manager.get_state(normalized_slot).duplicate(true)
 
 func get_slot_media_info(slot_name: String = DEFAULT_SLOT) -> Dictionary:
-	var manager := get_slot_manager(slot_name)
+	var normalized_slot := _normalize_slot_name(slot_name)
+	var manager := get_slot_manager(normalized_slot)
 	if manager == null:
 		return {}
-	return manager.get_media_info().duplicate(true)
+	manager.set_active_slot(normalized_slot)
+	return manager.get_media_info(normalized_slot).duplicate(true)
 
 func get_slot_descriptor(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager: Node = get_slot_manager(normalized_slot)
 	var entry: Dictionary = _slot_entries.get(normalized_slot, {})
 	var surface: Node = entry.get("surface", null)
-	var state: Dictionary = manager.get_state().duplicate(true) if manager != null else {}
-	var media_info: Dictionary = manager.get_media_info().duplicate(true) if manager != null else {}
+	var state: Dictionary = manager.get_state(normalized_slot).duplicate(true) if manager != null else {}
+	var media_info: Dictionary = manager.get_media_info(normalized_slot).duplicate(true) if manager != null else {}
 	return {
 		"slot": normalized_slot,
 		"created": manager != null,
@@ -186,21 +215,27 @@ func get_capabilities() -> Dictionary:
 		"supports_slots": true,
 		"supports_independent_loop_control": true,
 		"supports_independent_rate_control": true,
+		"supports_independent_cover_mode_control": true,
+		"supports_independent_audio_level_control": true,
 		"supports_independent_audio_control": true,
 		"slot_names": get_slot_names(),
 	}
 
 func reset() -> void:
 	for slot_name in _slot_entries.keys():
-		var manager := get_slot_manager(str(slot_name))
+		var normalized_slot := str(slot_name)
+		var manager := get_slot_manager(normalized_slot)
 		if manager != null and manager.has_method("reset"):
-			manager.reset()
+			manager.set_active_slot(normalized_slot)
+			manager.reset(normalized_slot)
 
 func unload_all() -> void:
 	for slot_name in _slot_entries.keys():
-		var manager := get_slot_manager(str(slot_name))
+		var normalized_slot := str(slot_name)
+		var manager := get_slot_manager(normalized_slot)
 		if manager != null and manager.has_method("unload"):
-			manager.unload()
+			manager.set_active_slot(normalized_slot)
+			manager.unload(normalized_slot)
 
 func _ensure_slot_manager(slot_name: String) -> Node:
 	var manager := get_slot_manager(slot_name)
@@ -220,6 +255,7 @@ func _build_slot_manager(slot_name: String) -> Node:
 		manager.set_backend(backend)
 	manager.name = "VideoManager_%s" % slot_name.capitalize()
 	add_child(manager)
+	manager.set_active_slot(slot_name)
 	_slot_entries[slot_name] = {
 		"manager": manager,
 		"surface": null,
@@ -241,16 +277,18 @@ func _connect_manager_signals(slot_name: String, manager: Node) -> void:
 		manager.error_raised.connect(_on_slot_error_raised.bind(slot_name))
 
 func _snapshot_slot_result(slot_name: String) -> Dictionary:
-	var manager := get_slot_manager(slot_name)
+	var normalized_slot := _normalize_slot_name(slot_name)
+	var manager := get_slot_manager(normalized_slot)
 	if manager == null:
-		return _fail(slot_name, "video_slot_missing", "Requested slot does not exist.")
-	var error_info: Dictionary = manager.get_last_error().duplicate(true) if manager.has_method("get_last_error") else {}
+		return _fail(normalized_slot, "video_slot_missing", "Requested slot does not exist.")
+	manager.set_active_slot(normalized_slot)
+	var error_info: Dictionary = manager.get_last_error(normalized_slot).duplicate(true) if manager.has_method("get_last_error") else {}
 	if not error_info.is_empty():
-		return _fail(slot_name, str(error_info.get("code", "video_slot_operation_failed")), str(error_info.get("message", "Video slot operation failed.")), error_info.get("detail", {}))
-	return _ok(slot_name, {
-		"state": manager.get_state().duplicate(true) if manager.has_method("get_state") else {},
-		"media_info": manager.get_media_info().duplicate(true) if manager.has_method("get_media_info") else {},
-		"attached": bool(get_slot_descriptor(slot_name).get("attached", false)),
+		return _fail(normalized_slot, str(error_info.get("code", "video_slot_operation_failed")), str(error_info.get("message", "Video slot operation failed.")), error_info.get("detail", {}))
+	return _ok(normalized_slot, {
+		"state": manager.get_state(normalized_slot).duplicate(true) if manager.has_method("get_state") else {},
+		"media_info": manager.get_media_info(normalized_slot).duplicate(true) if manager.has_method("get_media_info") else {},
+		"attached": bool(get_slot_descriptor(normalized_slot).get("attached", false)),
 		"slot_names": get_slot_names(),
 	})
 

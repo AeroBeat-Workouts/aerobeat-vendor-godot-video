@@ -5,7 +5,7 @@
 class_name AeroGodotVideoBackendFactory
 extends RefCounted
 
-const VERSION := "0.3.0"
+const VERSION := "0.4.0"
 const ManagerScript := preload("res://addons/aerobeat-tool-video-player/src/AeroVideoPlayerManager.gd")
 const BackendScript := preload("AeroGodotVideoBackend.gd")
 const SlotBankScript := preload("AeroGodotVideoSlotBank.gd")
@@ -18,6 +18,9 @@ func create_backend(player_factory: Callable = Callable()) -> RefCounted:
 
 func create_manager(player_factory: Callable = Callable()) -> Node:
 	var manager = ManagerScript.new()
+	manager.set_backend_factory(func() -> AeroVideoPlayerBackend:
+		return create_backend(player_factory)
+	)
 	manager.set_backend(create_backend(player_factory))
 	return manager
 
