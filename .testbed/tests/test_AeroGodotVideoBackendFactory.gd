@@ -3,6 +3,7 @@ extends GutTest
 const FACTORY_SCRIPT := preload("res://addons/aerobeat-vendor-godot-video/src/AeroGodotVideoBackendFactory.gd")
 const FAKE_PLAYER_SCRIPT := preload("res://tests/helpers/FakeVideoStreamPlayer.gd")
 const SAMPLE_VIDEO_PATH := "res://assets/videos/calm_blue_sea_1.ogv"
+const SAMPLE_VIDEO_PROJECT_PATH := "assets/videos/calm_blue_sea_1.ogv"
 const STATE_IDLE := "idle"
 const STATE_READY := "ready"
 const STATE_PLAYING := "playing"
@@ -19,6 +20,9 @@ var _external_sample_path: String = ""
 
 func _make_fake_player() -> Node:
 	return FAKE_PLAYER_SCRIPT.new()
+
+func _resolve_remote_sample(_url: String) -> String:
+	return _external_sample_path
 
 func before_each() -> void:
 	_factory = FACTORY_SCRIPT.new()
@@ -114,6 +118,48 @@ func test_backend_loads_an_external_absolute_ogv_file_outside_the_project_tree()
 	assert_not_null(stream, "Player should receive a VideoStream resource for the external file")
 	assert_true(stream.has_method("get_file"), "External stream should be a file-backed VideoStream resource")
 	assert_eq(str(stream.call("get_file")), _external_sample_path, "External stream resource should point at the outside-project absolute path")
+
+func test_backend_loads_a_project_relative_ogv_path_inside_the_repo_testbed() -> void:
+	var surface := Control.new()
+	surface.name = "ProjectRelativeSurface"
+	surface.custom_minimum_size = Vector2(640, 360)
+	add_child_autofree(surface)
+	assert_true(bool(_backend.attach_surface(surface).get("success", false)), "Backend should attach to a surface container for project-relative coverage")
+
+	var result := _backend.load({
+		"path": SAMPLE_VIDEO_PROJECT_PATH,
+		"metadata": {"source": "project_relative_fixture", "inside_project_tree": true},
+	})
+	assert_true(bool(result.get("success", false)), "Backend should load a project-relative package path without requiring res:// in the caller")
+	var media_info := _backend.get_media_info()
+	assert_eq(str(media_info.get("path", "")), SAMPLE_VIDEO_PROJECT_PATH, "Media info should preserve the caller-facing project-relative path")
+	assert_eq(str(media_info.get("resolved_path", "")), SAMPLE_VIDEO_PATH, "Backend should resolve the relative project path to the package resource path internally")
+	assert_eq(str(media_info.get("locality", "")), "relative_path", "Caller-facing metadata should preserve that the requested path was relative to the project package")
+
+func test_backend_loads_a_remote_url_when_a_direct_ogv_can_be_resolved_to_local_cache() -> void:
+	var surface := Control.new()
+	surface.name = "RemoteVideoSurface"
+	surface.custom_minimum_size = Vector2(640, 360)
+	add_child_autofree(surface)
+	_backend.set_remote_source_resolver(Callable(self, "_resolve_remote_sample"))
+	assert_true(bool(_backend.attach_surface(surface).get("success", false)), "Backend should attach to a surface container for remote-url coverage")
+
+	var remote_url := "https://example.com/fixtures/calm_blue_sea_1.ogv"
+	var result := _backend.load({
+		"path": remote_url,
+		"kind": AeroGodotVideoBackend.SOURCE_KIND_URL,
+		"metadata": {"source": "remote_fixture", "downloaded": true},
+	})
+	assert_true(bool(result.get("success", false)), "Backend should accept URL sources when they resolve to a local cache file")
+	var media_info := _backend.get_media_info()
+	assert_eq(str(media_info.get("path", "")), remote_url, "Media info should preserve the caller-facing URL")
+	assert_eq(str(media_info.get("resolved_path", "")), _external_sample_path, "Remote URL playback should expose the cache file path used for the actual Godot stream")
+	assert_eq(str(media_info.get("kind", "")), AeroGodotVideoBackend.SOURCE_KIND_URL, "Remote loads should report the url source kind")
+	var player := surface.get_child(0)
+	var stream: Variant = player.get("stream") if player != null and player.has_method("get") else null
+	assert_not_null(stream, "Player should receive a VideoStream resource for the resolved URL cache file")
+	assert_true(stream.has_method("get_file"), "Resolved remote stream should still be a file-backed VideoStream resource")
+	assert_eq(str(stream.call("get_file")), _external_sample_path, "Resolved remote stream should point at the cache file returned by the resolver")
 
 func test_manager_path_supports_load_play_pause_resume_seek_stop_cover_and_audio_level() -> void:
 	var surface := Control.new()
@@ -291,9 +337,9 @@ func test_slot_bank_supports_multiple_independent_video_slots_cover_and_audio_le
 	assert_eq(float(slot_bank.get_slot_state("right").get("audio_level", -1.0)), 0.15, "Right state should report its updated audio level")
 
 func test_backend_failure_cases_surface_honest_errors() -> void:
-	var remote_result := _backend.load({"path": "https://example.com/demo.ogv"})
-	assert_false(bool(remote_result.get("success", true)), "Remote URLs should be rejected in the Godot local-file slice")
-	assert_eq(str(_backend.get_last_error().get("code", "")), "backend_source_not_local", "Remote rejection should use the local-file error code")
+	var remote_result := _backend.load({"path": "ftp://example.com/demo.ogv", "kind": AeroGodotVideoBackend.SOURCE_KIND_URL})
+	assert_false(bool(remote_result.get("success", true)), "Only direct http/https URL sources should be accepted")
+	assert_eq(str(_backend.get_last_error().get("code", "")), "backend_source_url_invalid", "Unsupported URL schemes should use the explicit url validation error code")
 
 	var missing_result := _backend.load({"path": "res://assets/videos/does_not_exist.ogv"})
 	assert_false(bool(missing_result.get("success", true)), "Missing sample path should fail honestly")

@@ -53,8 +53,8 @@ This keeps the public playback contract stable while avoiding class-name collisi
 The hidden `.testbed/` workbench now includes a real `.ogv` proving surface.
 
 - `.testbed/assets/videos/calm_blue_sea_1.ogv` copies the proven environment-lane sample
-- `.testbed/scenes/video_backend_testbed.tscn` provides a manual proving scene for load / play / pause / resume / seek / stop / mute / failure handling
-- `.testbed/tests/test_AeroGodotVideoBackendFactory.gd` exercises the factory + backend contract path under GUT
+- `.testbed/scenes/video_backend_testbed.tscn` provides a manual proving scene for package-relative paths inside the project, absolute device paths outside the project, direct URLs, clickable seek timelines, and the existing load / play / pause / resume / stop / unload / mute coverage
+- `.testbed/tests/test_AeroGodotVideoBackendFactory.gd` exercises the factory + backend contract path under GUT, including relative package-path, external absolute-path, URL-resolution, clipping, and unload-reload regressions
 
 ## 📋 Repository Details
 
