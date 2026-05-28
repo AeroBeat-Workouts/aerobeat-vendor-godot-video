@@ -1,6 +1,6 @@
 extends Control
 
-const FACTORY_SCRIPT := preload("res://src/AeroGodotVideoBackendFactory.gd")
+const FACTORY_SCRIPT := preload("res://addons/aerobeat-vendor-godot-video/src/AeroGodotVideoBackendFactory.gd")
 const SAMPLE_VIDEO_PATH := "res://assets/videos/calm_blue_sea_1.ogv"
 const BAD_VIDEO_PATH := "res://assets/videos/does_not_exist.ogv"
 const SLOT_NAMES := ["primary", "secondary"]

@@ -1,6 +1,6 @@
 extends GutTest
 
-const FACTORY_SCRIPT := preload("res://src/AeroGodotVideoBackendFactory.gd")
+const FACTORY_SCRIPT := preload("res://addons/aerobeat-vendor-godot-video/src/AeroGodotVideoBackendFactory.gd")
 const FAKE_PLAYER_SCRIPT := preload("res://tests/helpers/FakeVideoStreamPlayer.gd")
 const SAMPLE_VIDEO_PATH := "res://assets/videos/calm_blue_sea_1.ogv"
 

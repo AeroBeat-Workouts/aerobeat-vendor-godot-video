@@ -1,6 +1,12 @@
 {
   "$schema": "https://chickensoft.games/schemas/addons.schema.json",
   "addons": {
+    // Install this repo into the hidden workbench the same way a consumer does.
+    "aerobeat-vendor-godot-video": {
+      "url": "..",
+      "source": "symlink",
+      "subfolder": "/"
+    },
     "aerobeat-tool-core": {
       "url": "git@github.com:AeroBeat-Workouts/aerobeat-tool-core.git",
       "checkout": "main",
