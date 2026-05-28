@@ -62,8 +62,8 @@ func attach_slot_surface(slot_name: String, surface: Node) -> Dictionary:
 	if surface == null:
 		return _fail(normalized_slot, "video_invalid_surface", "Cannot attach a null output surface.")
 	var manager := _ensure_slot_manager(normalized_slot)
-	manager.attach_surface(surface, normalized_slot)
 	manager.set_active_slot(normalized_slot)
+	manager.attach_surface(surface, normalized_slot)
 	var entry: Dictionary = _slot_entries.get(normalized_slot, {}).duplicate(true)
 	entry["surface"] = surface
 	_slot_entries[normalized_slot] = entry
@@ -77,8 +77,8 @@ func detach_slot_surface(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 	var manager := get_slot_manager(normalized_slot)
 	if manager == null:
 		return _ok(normalized_slot, {"attached": false})
-	manager.detach_surface(normalized_slot)
 	manager.set_active_slot(normalized_slot)
+	manager.detach_surface(normalized_slot)
 	var entry: Dictionary = _slot_entries.get(normalized_slot, {}).duplicate(true)
 	entry["surface"] = null
 	_slot_entries[normalized_slot] = entry
@@ -252,6 +252,12 @@ func _build_slot_manager(slot_name: String) -> Node:
 		var backend := BackendScript.new()
 		if _player_factory.is_valid():
 			backend.set_player_factory(_player_factory)
+		manager.set_backend_factory(func() -> AeroVideoPlayerBackend:
+			var created_backend := BackendScript.new()
+			if _player_factory.is_valid():
+				created_backend.set_player_factory(_player_factory)
+			return created_backend
+		)
 		manager.set_backend(backend)
 	manager.name = "VideoManager_%s" % slot_name.capitalize()
 	add_child(manager)
