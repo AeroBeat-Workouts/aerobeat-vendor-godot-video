@@ -161,6 +161,34 @@ func test_backend_loads_a_remote_url_when_a_direct_ogv_can_be_resolved_to_local_
 	assert_true(stream.has_method("get_file"), "Resolved remote stream should still be a file-backed VideoStream resource")
 	assert_eq(str(stream.call("get_file")), _external_sample_path, "Resolved remote stream should point at the cache file returned by the resolver")
 
+func test_remote_http_url_is_reclassified_without_explicit_kind() -> void:
+	var normalized := _backend.normalize_source({
+		"path": " https://upload.wikimedia.org/wikipedia/commons/6/65/Examplevideo.ogv ",
+	})
+	assert_eq(String(normalized.get("path", "")), "https://upload.wikimedia.org/wikipedia/commons/6/65/Examplevideo.ogv", "normalize_source should trim remote URL whitespace")
+	assert_eq(String(normalized.get("kind", "")), AeroGodotVideoBackend.SOURCE_KIND_URL, "normalize_source should classify http(s) paths as remote URLs even when kind is omitted")
+	assert_eq(String(normalized.get("locality", "")), "remote", "normalize_source should report remote locality for http(s) URLs")
+	assert_false(bool(normalized.get("is_local_file", true)), "normalize_source should not treat remote URLs as local files")
+
+func test_backend_loads_remote_url_without_explicit_kind_when_path_is_http() -> void:
+	var surface := Control.new()
+	surface.name = "RemoteVideoSurfaceImplicitKind"
+	surface.custom_minimum_size = Vector2(640, 360)
+	add_child_autofree(surface)
+	_backend.set_remote_source_resolver(Callable(self, "_resolve_remote_sample"))
+	assert_true(bool(_backend.attach_surface(surface).get("success", false)), "Backend should attach to a surface container for implicit remote-url coverage")
+
+	var remote_url := "https://upload.wikimedia.org/wikipedia/commons/6/65/Examplevideo.ogv"
+	var result := _backend.load({
+		"path": remote_url,
+		"metadata": {"source": "wikimedia_repro", "downloaded": true},
+	})
+	assert_true(bool(result.get("success", false)), "Backend should accept URL sources when the caller provides a real http(s) path without an explicit kind")
+	var media_info := _backend.get_media_info()
+	assert_eq(str(media_info.get("path", "")), remote_url, "Media info should preserve the caller-facing URL for implicit remote loads")
+	assert_eq(str(media_info.get("resolved_path", "")), _external_sample_path, "Implicit remote loads should expose the cache file path used for playback")
+	assert_eq(str(media_info.get("kind", "")), AeroGodotVideoBackend.SOURCE_KIND_URL, "Implicit remote loads should report the url source kind")
+
 func test_manager_path_supports_load_play_pause_resume_seek_stop_cover_and_audio_level() -> void:
 	var surface := Control.new()
 	surface.name = "ManagedSurface"

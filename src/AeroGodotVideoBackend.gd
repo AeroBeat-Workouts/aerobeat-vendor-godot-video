@@ -62,8 +62,9 @@ func normalize_source(source: Dictionary) -> Dictionary:
 	var normalized := CoreContract.normalize_source(source)
 	var original_path := str(normalized.get("path", "")).strip_edges()
 	var inferred_kind := str(normalized.get("kind", "")).strip_edges().to_lower()
-	if inferred_kind.is_empty():
-		inferred_kind = _infer_source_kind(original_path)
+	var path_inferred_kind := _infer_source_kind(original_path)
+	if inferred_kind.is_empty() or path_inferred_kind == SOURCE_KIND_URL:
+		inferred_kind = path_inferred_kind
 	if original_path.to_lower().begins_with("file://"):
 		normalized["path"] = _normalize_file_uri(original_path)
 	else:
