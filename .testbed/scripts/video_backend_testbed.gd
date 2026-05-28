@@ -182,6 +182,7 @@ func _build_slot_panel(slot_name: String) -> Control:
 	column.add_child(row_two)
 	row_two.add_child(_make_button(slot_name, "Seek +5s", "seek"))
 	row_two.add_child(_make_button(slot_name, "Stop", "stop"))
+	row_two.add_child(_make_button(slot_name, "Unload", "unload"))
 	var mute_button := _make_button(slot_name, "Mute", "mute")
 	row_two.add_child(mute_button)
 	var loop_button := _make_button(slot_name, "Loop: off", "loop")
@@ -247,6 +248,8 @@ func _on_slot_button_pressed(slot_name: String, action: String) -> void:
 			_slot_bank.seek_slot(slot_name, target_seconds)
 		"stop":
 			_slot_bank.stop_slot(slot_name)
+		"unload":
+			_slot_bank.unload_slot(slot_name)
 		"mute":
 			var backend: Variant = _get_slot_backend(slot_name)
 			var audio_state: Dictionary = backend.get_audio_state() if backend != null and backend.has_method("get_audio_state") else {"muted": false}

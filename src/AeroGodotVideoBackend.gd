@@ -296,7 +296,9 @@ func get_media_info() -> Dictionary:
 func attach_surface(node: Node) -> Dictionary:
 	if node == null:
 		return _fail("backend_invalid_surface", "Cannot attach a null output surface.")
+	_unbind_surface_resize(_surface)
 	_surface = node
+	_bind_surface_resize()
 	var player_result := _ensure_player()
 	if not bool(player_result.get(CoreContract.RESULT_SUCCESS, false)):
 		return player_result
@@ -312,6 +314,7 @@ func attach_surface(node: Node) -> Dictionary:
 	})
 
 func detach_surface() -> Dictionary:
+	_unbind_surface_resize(_surface)
 	if _player != null and _surface != null and _player != _surface and _player.get_parent() == _surface:
 		_surface.remove_child(_player)
 		if _player.has_method("queue_free"):
@@ -322,6 +325,30 @@ func detach_surface() -> Dictionary:
 		_vendor_state = STATE_IDLE
 	_last_error = {}
 	return _ok({"surface_attached": false})
+
+func unload() -> Dictionary:
+	if _player != null:
+		if _player.has_method("stop"):
+			_player.call("stop")
+		_set_player_property("paused", false)
+		_set_player_property("playing", false)
+		_set_player_property("stream_position", 0.0)
+		_set_player_property("stream", null)
+	_stream_resource = null
+	_loaded_source = {}
+	_media_info = {}
+	_position_seconds = 0.0
+	_duration_seconds = 0.0
+	_loop_enabled = false
+	_rate = 1.0
+	_last_error = {}
+	_vendor_state = STATE_ATTACHED if _surface != null else STATE_IDLE
+	_apply_cover_layout()
+	return _ok({
+		"surface_attached": _surface != null,
+		"media_loaded": false,
+		"vendor_state": _vendor_state,
+	})
 
 func get_last_error() -> Dictionary:
 	return _last_error.duplicate(true)
@@ -580,13 +607,32 @@ func _apply_audio_state() -> bool:
 		applied = _set_player_property("volume_db", _audio_level_to_db(effective_audio_level)) or applied
 	return applied
 
+func _bind_surface_resize() -> void:
+	if not (_surface is Control):
+		return
+	var control := _surface as Control
+	var resized_callback := Callable(self, "_on_surface_resized")
+	if not control.resized.is_connected(resized_callback):
+		control.resized.connect(resized_callback)
+
+func _unbind_surface_resize(surface: Variant) -> void:
+	if not (surface is Control):
+		return
+	var control := surface as Control
+	var resized_callback := Callable(self, "_on_surface_resized")
+	if control.resized.is_connected(resized_callback):
+		control.resized.disconnect(resized_callback)
+
+func _on_surface_resized() -> void:
+	_apply_cover_layout()
+
 func _apply_cover_layout() -> void:
 	if _player == null:
 		return
 	if _player_supports_property("cover_mode"):
 		_set_player_property("cover_mode", _cover_mode)
 	if _surface is Control:
-		(_surface as Control).clip_contents = _cover_mode == COVER_MODE_COVER
+		(_surface as Control).clip_contents = true
 	if not (_surface is Control and _player is Control):
 		return
 	var surface_control := _surface as Control

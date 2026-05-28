@@ -150,6 +150,56 @@ func test_manager_path_supports_load_play_pause_resume_seek_stop_cover_and_audio
 	assert_eq(str(_manager.get_state().get("state", "")), STATE_READY, "stop should return the manager to ready")
 	assert_eq(_manager.get_position(), 0.0, "stop should reset playback position")
 
+func test_backend_reapplies_layout_on_surface_resize_and_keeps_video_clipped_to_slot_bounds() -> void:
+	var surface := Control.new()
+	surface.name = "ResizableSurface"
+	surface.size = Vector2(800, 300)
+	add_child_autofree(surface)
+	assert_true(bool(_backend.attach_surface(surface).get("success", false)), "Backend should attach to a resizable surface for clipping coverage")
+	assert_true(bool(_backend.load({
+		"path": SAMPLE_VIDEO_PATH,
+		"width": 1920,
+		"height": 1080,
+		"cover_mode": COVER_MODE_CONTAIN,
+		"metadata": {"real_sample": true, "scenario": "resize_clip"},
+	}).get("success", false)), "Backend should load the sample for resize coverage")
+	var player := surface.get_child(0) as Control
+	assert_not_null(player, "Backend should create a player node for resize coverage")
+	assert_true(surface.clip_contents, "Video surfaces should clip contents to keep playback inside slot bounds")
+
+	surface.size = Vector2(300, 300)
+	await get_tree().process_frame
+	assert_almost_eq(player.size.x, 300.0, 0.05, "Contain layout should recompute width after the slot is resized")
+	assert_almost_eq(player.size.y, 168.75, 0.05, "Contain layout should recompute height after the slot is resized")	
+	assert_almost_eq(player.position.x, 0.0, 0.05, "Contain layout should remain horizontally centered after resize")
+	assert_almost_eq(player.position.y, 65.625, 0.05, "Contain layout should remain vertically centered after resize")
+
+func test_slot_bank_unload_preserves_surface_binding_and_allows_reload() -> void:
+	var slot_bank := _factory.create_slot_bank(Callable(self, "_make_fake_player"))
+	add_child_autofree(slot_bank)
+	var surface := Control.new()
+	surface.name = "UnloadSurface"
+	surface.size = Vector2(640, 360)
+	add_child_autofree(surface)
+	assert_true(bool(slot_bank.attach_slot_surface("primary", surface).get("success", false)), "Slot bank should attach a surface before unload coverage")
+	assert_true(bool(slot_bank.load_slot("primary", {
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 12.0,
+		"cover_mode": COVER_MODE_COVER,
+		"metadata": {"real_sample": true, "scenario": "unload_reload"},
+	}).get("success", false)), "Slot bank should load media before unload coverage")
+	assert_true(bool(slot_bank.unload_slot("primary").get("success", false)), "Slot bank should expose explicit unload support")
+	var unloaded_state := slot_bank.get_slot_state("primary")
+	assert_eq(str(unloaded_state.get("state", "")), STATE_IDLE, "Unload should idle the slot manager")
+	assert_true(bool(unloaded_state.get("surface_attached", false)), "Unload should preserve the attached surface for later reloads")
+	assert_true(bool(slot_bank.load_slot("primary", {
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 12.0,
+		"cover_mode": COVER_MODE_CONTAIN,
+		"metadata": {"real_sample": true, "scenario": "reload_after_unload"},
+	}).get("success", false)), "A slot should reload cleanly after unload without reattaching its surface")
+	assert_eq(str(slot_bank.get_slot_state("primary").get("state", "")), STATE_READY, "Reload after unload should restore the slot to ready")
+
 func test_backend_applies_and_updates_loop_cover_and_audio_state_on_the_player() -> void:
 	var surface := Control.new()
 	surface.name = "LoopSurface"
