@@ -821,6 +821,8 @@ func _apply_cover_layout() -> void:
 		return
 	if _player_supports_property("cover_mode"):
 		_set_player_property("cover_mode", _cover_mode)
+	if _player_supports_property("expand"):
+		_set_player_property("expand", true)
 	if _surface is Control:
 		(_surface as Control).clip_contents = true
 	if not (_surface is Control and _player is Control):
@@ -828,6 +830,7 @@ func _apply_cover_layout() -> void:
 	var surface_control := _surface as Control
 	var player_control := _player as Control
 	player_control.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	player_control.custom_minimum_size = Vector2.ZERO
 	var surface_size := surface_control.size
 	if surface_size.x <= 0.0 or surface_size.y <= 0.0:
 		surface_size = surface_control.get_rect().size

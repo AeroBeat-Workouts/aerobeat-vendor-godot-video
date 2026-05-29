@@ -35,6 +35,7 @@ var _factory: AeroGodotVideoBackendFactory
 var _slot_bank: AeroGodotVideoSlotBank
 var _slot_widgets: Dictionary = {}
 var _summary_label: Label
+var _slots_grid: GridContainer
 var _cover_syncing := {}
 var _audio_syncing := {}
 var _seek_syncing := {}
@@ -59,6 +60,7 @@ func _ready() -> void:
 		_slot_bank.create_slot_manager(slot_name, surface)
 		_apply_slot_defaults(slot_name)
 		_load_slot_project_path(slot_name)
+	resized.connect(_on_testbed_resized)
 	set_process(true)
 	_refresh_all_labels()
 
@@ -69,6 +71,7 @@ func _exit_tree() -> void:
 		DirAccess.remove_absolute(_external_sample_dir)
 
 func _process(_delta: float) -> void:
+	_refresh_responsive_layout()
 	_refresh_all_labels()
 
 func _prepare_external_sample() -> void:
@@ -79,39 +82,54 @@ func _prepare_external_sample() -> void:
 		DirAccess.copy_absolute(ProjectSettings.globalize_path(SAMPLE_VIDEO_PATH), _external_sample_path)
 
 func _build_ui() -> void:
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	add_child(scroll)
+
 	var margin := MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	margin.add_theme_constant_override("margin_left", 24)
 	margin.add_theme_constant_override("margin_top", 24)
 	margin.add_theme_constant_override("margin_right", 24)
 	margin.add_theme_constant_override("margin_bottom", 24)
-	add_child(margin)
+	scroll.add_child(margin)
 
 	var root := VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_theme_constant_override("separation", 12)
 	margin.add_child(root)
 
 	var title := Label.new()
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.text = "AeroGodotVideoBackend multi-slot + arbitrary-source + timeline proving surface"
 	root.add_child(title)
 
 	_summary_label = Label.new()
+	_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_summary_label.text = "Two independent video slots, package/device/URL source inputs, clickable seek timelines, and preserved unload/clipping behavior."
 	root.add_child(_summary_label)
 
-	var slots_row := HBoxContainer.new()
-	slots_row.add_theme_constant_override("separation", 16)
-	slots_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	slots_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root.add_child(slots_row)
+	_slots_grid = GridContainer.new()
+	_slots_grid.columns = 2
+	_slots_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_slots_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_slots_grid.add_theme_constant_override("h_separation", 16)
+	_slots_grid.add_theme_constant_override("v_separation", 16)
+	root.add_child(_slots_grid)
 
 	for slot_name in SLOT_NAMES:
-		slots_row.add_child(_build_slot_panel(slot_name))
+		_slots_grid.add_child(_build_slot_panel(slot_name))
+
+	call_deferred("_refresh_responsive_layout")
 
 func _build_slot_panel(slot_name: String) -> Control:
 	var config: Dictionary = SLOT_DEFAULTS.get(slot_name, {})
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(560, 860)
+	panel.custom_minimum_size = Vector2(360, 640)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
@@ -158,8 +176,10 @@ func _build_slot_panel(slot_name: String) -> Control:
 	load_button.pressed.connect(_load_slot_from_input.bind(slot_name))
 	source_row.add_child(load_button)
 
-	var preset_row := HBoxContainer.new()
-	preset_row.add_theme_constant_override("separation", 8)
+	var preset_row := HFlowContainer.new()
+	preset_row.add_theme_constant_override("h_separation", 8)
+	preset_row.add_theme_constant_override("v_separation", 8)
+	preset_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(preset_row)
 	preset_row.add_child(_make_button(slot_name, "Packaged", "use_project_source"))
 	preset_row.add_child(_make_button(slot_name, "Device file", "use_external_source"))
@@ -180,7 +200,7 @@ func _build_slot_panel(slot_name: String) -> Control:
 	column.add_child(audio_label)
 
 	var surface_panel := PanelContainer.new()
-	surface_panel.custom_minimum_size = Vector2(480, 270)
+	surface_panel.custom_minimum_size = Vector2(320, 180)
 	surface_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	surface_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(surface_panel)
@@ -190,8 +210,10 @@ func _build_slot_panel(slot_name: String) -> Control:
 	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	surface_panel.add_child(surface)
 
-	var config_row := HBoxContainer.new()
-	config_row.add_theme_constant_override("separation", 8)
+	var config_row := HFlowContainer.new()
+	config_row.add_theme_constant_override("h_separation", 8)
+	config_row.add_theme_constant_override("v_separation", 8)
+	config_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(config_row)
 
 	var cover_label := Label.new()
@@ -249,8 +271,10 @@ func _build_slot_panel(slot_name: String) -> Control:
 	timeline_hint.text = "Timeline: click or drag to seek"
 	column.add_child(timeline_hint)
 
-	var row_two := HBoxContainer.new()
-	row_two.add_theme_constant_override("separation", 8)
+	var row_two := HFlowContainer.new()
+	row_two.add_theme_constant_override("h_separation", 8)
+	row_two.add_theme_constant_override("v_separation", 8)
+	row_two.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(row_two)
 	row_two.add_child(_make_button(slot_name, "Play", "play"))
 	row_two.add_child(_make_button(slot_name, "Pause", "pause"))
@@ -513,6 +537,17 @@ func _set_slot_source_input(slot_name: String, path: String, duration_hint: floa
 		source_input.text = path
 	if duration_spin != null:
 		duration_spin.value = duration_hint
+
+func _on_testbed_resized() -> void:
+	_refresh_responsive_layout()
+
+func _refresh_responsive_layout() -> void:
+	if _slots_grid == null:
+		return
+	var available_width := maxf(size.x, get_viewport_rect().size.x)
+	var desired_columns := 2 if available_width >= 1180.0 else 1
+	if _slots_grid.columns != desired_columns:
+		_slots_grid.columns = desired_columns
 
 func _format_audio_level(audio_level: float) -> String:
 	return "%d%%" % int(round(clampf(audio_level, 0.0, 1.0) * 100.0))

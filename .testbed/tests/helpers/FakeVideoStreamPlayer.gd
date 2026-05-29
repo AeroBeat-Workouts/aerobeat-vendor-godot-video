@@ -10,6 +10,7 @@ var volume: float = 1.0
 var volume_db: float = 0.0
 var stream: Variant = null
 var cover_mode: String = "contain"
+var expand: bool = false
 var last_source_descriptor: Dictionary = {}
 
 func play() -> void:
