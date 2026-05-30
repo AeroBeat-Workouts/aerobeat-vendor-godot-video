@@ -300,6 +300,40 @@ func test_backend_applies_and_updates_loop_cover_and_audio_state_on_the_player()
 	assert_eq(str(player.get("cover_mode")), COVER_MODE_COVER, "Fake player should reflect cover mode changes")
 	assert_eq(player.get("volume"), 0.2, "Fake player should reflect audio-level changes")
 
+func test_backend_tolerates_unload_and_rebind_after_the_original_surface_was_freed() -> void:
+	var first_surface := Control.new()
+	first_surface.name = "FirstFreedSurface"
+	first_surface.size = Vector2(640, 360)
+	add_child(first_surface)
+	assert_true(bool(_backend.attach_surface(first_surface).get("success", false)), "Backend should attach the first surface before freed-surface coverage")
+	assert_true(bool(_backend.load({
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 12.0,
+		"cover_mode": COVER_MODE_COVER,
+		"metadata": {"real_sample": true, "scenario": "freed_surface_guard_first_load"},
+	}).get("success", false)), "Backend should load on the first surface before freed-surface coverage")
+
+	first_surface.queue_free()
+	await get_tree().process_frame
+	assert_false(is_instance_valid(first_surface), "Freed-surface coverage should release the original surface before unload")
+
+	assert_true(bool(_backend.unload().get("success", false)), "Unload should tolerate a previously freed surface reference")
+	assert_true(bool(_backend.detach_surface().get("success", false)), "Detach should tolerate a previously freed surface reference")
+	assert_eq(str(_backend.get_state().get("vendor_state", "")), STATE_IDLE, "Unload + detach after a freed surface should leave the backend idle")
+
+	var second_surface := Control.new()
+	second_surface.name = "SecondReloadSurface"
+	second_surface.size = Vector2(640, 360)
+	add_child_autofree(second_surface)
+	assert_true(bool(_backend.attach_surface(second_surface).get("success", false)), "Backend should reattach to a replacement surface after the original was freed")
+	assert_true(bool(_backend.load({
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 12.0,
+		"cover_mode": COVER_MODE_CONTAIN,
+		"metadata": {"real_sample": true, "scenario": "freed_surface_guard_second_load"},
+	}).get("success", false)), "Backend should load again after clearing the freed surface reference")
+	assert_eq(str(_backend.get_state().get("vendor_state", "")), STATE_READY, "Replacement-surface reload should leave the backend ready")
+
 func test_slot_bank_supports_multiple_independent_video_slots_cover_and_audio_level() -> void:
 	var slot_bank := _factory.create_slot_bank(Callable(self, "_make_fake_player"))
 	add_child_autofree(slot_bank)

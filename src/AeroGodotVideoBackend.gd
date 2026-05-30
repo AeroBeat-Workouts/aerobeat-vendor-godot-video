@@ -58,6 +58,28 @@ func set_player_node(node: Node) -> void:
 	_sync_player_binding()
 	_sync_player_configuration()
 
+func _is_live_object(value: Variant) -> bool:
+	return value != null and typeof(value) == TYPE_OBJECT and is_instance_valid(value)
+
+func _live_surface() -> Node:
+	if not _is_live_object(_surface):
+		_surface = null
+		return null
+	return _surface
+
+func _live_player() -> Node:
+	if not _is_live_object(_player):
+		_player = null
+		return null
+	return _player
+
+func _surface_as_control(surface: Variant) -> Control:
+	if not _is_live_object(surface):
+		return null
+	if not (surface is Control):
+		return null
+	return surface as Control
+
 func normalize_source(source: Dictionary) -> Dictionary:
 	var normalized := CoreContract.normalize_source(source)
 	var original_path := str(normalized.get("path", "")).strip_edges()
@@ -202,9 +224,10 @@ func play() -> Dictionary:
 	if _loaded_source.is_empty():
 		return _fail("backend_not_loaded", "Cannot start playback before a source is loaded.")
 	_vendor_state = STATE_PLAYING
-	if _player != null:
-		if _player.has_method("play"):
-			_player.call("play")
+	var player := _live_player()
+	if player != null:
+		if player.has_method("play"):
+			player.call("play")
 		_set_player_property("paused", false)
 	_last_error = {}
 	return _ok({"vendor_state": _vendor_state})
@@ -213,10 +236,11 @@ func pause() -> Dictionary:
 	if _loaded_source.is_empty():
 		return _fail("backend_not_loaded", "Cannot pause playback before a source is loaded.")
 	_vendor_state = STATE_PAUSED
-	if _player != null:
-		if _player.has_method("pause"):
-			_player.call("pause")
-		elif _player.has_method("set"):
+	var player := _live_player()
+	if player != null:
+		if player.has_method("pause"):
+			player.call("pause")
+		elif player.has_method("set"):
 			_set_player_property("playing", false)
 		_set_player_property("paused", true)
 	_last_error = {}
@@ -227,9 +251,10 @@ func stop() -> Dictionary:
 		return _fail("backend_not_loaded", "Cannot stop playback before a source is loaded.")
 	_vendor_state = STATE_READY
 	_position_seconds = 0.0
-	if _player != null:
-		if _player.has_method("stop"):
-			_player.call("stop")
+	var player := _live_player()
+	if player != null:
+		if player.has_method("stop"):
+			player.call("stop")
 		_set_player_property("paused", false)
 		_set_player_property("playing", false)
 		_set_player_property("stream_position", 0.0)
@@ -272,7 +297,7 @@ func set_cover_mode(cover_mode: String) -> Dictionary:
 		_loaded_source["cover_mode"] = _cover_mode
 	_apply_cover_layout()
 	_last_error = {}
-	return _ok({"cover_mode": _cover_mode, "surface_attached": _surface != null})
+	return _ok({"cover_mode": _cover_mode, "surface_attached": _live_surface() != null})
 
 func set_audio_level(audio_level: float) -> Dictionary:
 	_audio_level = _normalize_audio_level(audio_level)
@@ -289,20 +314,21 @@ func set_muted(muted: bool) -> Dictionary:
 	return _ok({"audio": get_audio_state(), "applied_to_player": applied})
 
 func get_audio_state() -> Dictionary:
+	var player := _live_player()
 	var effective_audio_level := 0.0 if _muted else _audio_level
 	var audio := {
 		"muted": _muted,
 		"audio_level": _audio_level,
 		"effective_audio_level": effective_audio_level,
-		"player_present": _player != null,
+		"player_present": player != null,
 		"volume": effective_audio_level,
 		"volume_db": _audio_level_to_db(effective_audio_level),
 	}
-	if _player != null:
+	if player != null:
 		if _player_supports_property("volume"):
-			audio["volume"] = float(_player.get("volume"))
+			audio["volume"] = float(player.get("volume"))
 		if _player_supports_property("volume_db"):
-			audio["volume_db"] = float(_player.get("volume_db"))
+			audio["volume_db"] = float(player.get("volume_db"))
 	return audio
 
 func get_state() -> Dictionary:
@@ -339,15 +365,17 @@ func attach_surface(node: Node) -> Dictionary:
 	return _ok({
 		"surface_attached": true,
 		"surface_path": str(node.get_path()) if node.is_inside_tree() else node.name,
-		"player_present": _player != null,
+		"player_present": _live_player() != null,
 	})
 
 func detach_surface() -> Dictionary:
-	_unbind_surface_resize(_surface)
-	if _player != null and _surface != null and _player != _surface and _player.get_parent() == _surface:
-		_surface.remove_child(_player)
-		if _player.has_method("queue_free"):
-			_player.call("queue_free")
+	var surface := _live_surface()
+	var player := _live_player()
+	_unbind_surface_resize(surface)
+	if player != null and surface != null and player != surface and player.get_parent() == surface:
+		surface.remove_child(player)
+		if player.has_method("queue_free"):
+			player.call("queue_free")
 		_player = null
 	_surface = null
 	if _loaded_source.is_empty():
@@ -356,9 +384,11 @@ func detach_surface() -> Dictionary:
 	return _ok({"surface_attached": false})
 
 func unload() -> Dictionary:
-	if _player != null:
-		if _player.has_method("stop"):
-			_player.call("stop")
+	var player := _live_player()
+	var surface := _live_surface()
+	if player != null:
+		if player.has_method("stop"):
+			player.call("stop")
 		_set_player_property("paused", false)
 		_set_player_property("playing", false)
 		_set_player_property("stream_position", 0.0)
@@ -371,10 +401,10 @@ func unload() -> Dictionary:
 	_loop_enabled = false
 	_rate = 1.0
 	_last_error = {}
-	_vendor_state = STATE_ATTACHED if _surface != null else STATE_IDLE
+	_vendor_state = STATE_ATTACHED if surface != null else STATE_IDLE
 	_apply_cover_layout()
 	return _ok({
-		"surface_attached": _surface != null,
+		"surface_attached": surface != null,
 		"media_loaded": false,
 		"vendor_state": _vendor_state,
 	})
@@ -685,29 +715,34 @@ func _load_external_stream_resource(path: String) -> Variant:
 	return stream
 
 func _ensure_player() -> Dictionary:
-	if _player != null:
+	var player := _live_player()
+	var surface := _live_surface()
+	if player != null:
 		return _ok({"player_present": true})
-	if _surface is VideoStreamPlayer:
-		_player = _surface
+	if surface is VideoStreamPlayer:
+		_player = surface
 	elif _player_factory.is_valid():
 		_player = _player_factory.call()
 	elif ClassDB.can_instantiate("VideoStreamPlayer"):
 		_player = ClassDB.instantiate("VideoStreamPlayer")
-	if _player == null:
+	player = _live_player()
+	if player == null:
 		return _fail("backend_player_unavailable", "Unable to create a Godot video player node for the attached surface.")
-	if str(_player.name).is_empty():
-		_player.name = "AeroGodotVideoPlayer"
+	if str(player.name).is_empty():
+		player.name = "AeroGodotVideoPlayer"
 	return _ok({"player_present": true})
 
 func _sync_player_binding() -> void:
-	if _surface == null or _player == null:
+	var surface := _live_surface()
+	var player := _live_player()
+	if surface == null or player == null:
 		return
-	if _player == _surface:
+	if player == surface:
 		return
-	if _player.get_parent() != _surface:
-		if _player.get_parent() != null:
-			_player.get_parent().remove_child(_player)
-		_surface.add_child(_player)
+	if player.get_parent() != surface:
+		if player.get_parent() != null:
+			player.get_parent().remove_child(player)
+		surface.add_child(player)
 
 func _sync_player_configuration() -> void:
 	if _player == null:
@@ -728,9 +763,11 @@ func _sync_player_configuration() -> void:
 		_player.call("apply_source_descriptor", _loaded_source.duplicate(true))
 
 func _snapshot_player_state() -> Dictionary:
+	var surface := _live_surface()
+	var player := _live_player()
 	var raw := {
-		"surface_attached": _surface != null,
-		"player_present": _player != null,
+		"surface_attached": surface != null,
+		"player_present": player != null,
 		"position": _position_seconds,
 		"duration": _duration_seconds,
 		"loop": _loop_enabled,
@@ -739,30 +776,30 @@ func _snapshot_player_state() -> Dictionary:
 		"audio_level": _audio_level,
 		"audio": get_audio_state(),
 	}
-	if _player != null:
+	if player != null:
 		if _player_supports_property("stream_position"):
-			raw["stream_position"] = float(_player.get("stream_position"))
+			raw["stream_position"] = float(player.get("stream_position"))
 			raw["position"] = float(raw.get("stream_position", _position_seconds))
 		if _player_supports_property("loop"):
-			raw["loop"] = bool(_player.get("loop"))
+			raw["loop"] = bool(player.get("loop"))
 		if _player_supports_property("playback_speed"):
-			raw["playback_speed"] = float(_player.get("playback_speed"))
+			raw["playback_speed"] = float(player.get("playback_speed"))
 			raw["rate"] = float(raw.get("playback_speed", _rate))
 		if _player_supports_property("autoplay"):
-			raw["autoplay"] = bool(_player.get("autoplay"))
+			raw["autoplay"] = bool(player.get("autoplay"))
 		if _player_supports_property("paused"):
-			raw["paused"] = bool(_player.get("paused"))
+			raw["paused"] = bool(player.get("paused"))
 		if _player_supports_property("cover_mode"):
-			raw["cover_mode"] = str(_player.get("cover_mode"))
+			raw["cover_mode"] = str(player.get("cover_mode"))
 		raw["playing"] = _is_player_playing(raw)
-		raw["player_name"] = str(_player.name)
+		raw["player_name"] = str(player.name)
 	return raw
 
 func _player_supports_property(property_name: String) -> bool:
-	return _object_supports_property(_player, property_name)
+	return _object_supports_property(_live_player(), property_name)
 
 func _object_supports_property(target: Variant, property_name: String) -> bool:
-	if target == null or not (target is Object):
+	if not _is_live_object(target):
 		return false
 	for property_info in target.get_property_list():
 		if str(property_info.get("name", "")) == property_name:
@@ -770,24 +807,26 @@ func _object_supports_property(target: Variant, property_name: String) -> bool:
 	return false
 
 func _set_player_property(property_name: String, value: Variant) -> bool:
-	if _player == null or not _player_supports_property(property_name):
+	var player := _live_player()
+	if player == null or not _player_supports_property(property_name):
 		return false
-	_player.set(property_name, value)
+	player.set(property_name, value)
 	return true
 
 func _is_player_playing(raw: Dictionary) -> bool:
-	if _player == null:
+	var player := _live_player()
+	if player == null:
 		return false
-	if _player.has_method("is_playing"):
-		return bool(_player.call("is_playing"))
+	if player.has_method("is_playing"):
+		return bool(player.call("is_playing"))
 	if _player_supports_property("playing"):
-		return bool(_player.get("playing"))
+		return bool(player.get("playing"))
 	if raw.has("paused"):
 		return not bool(raw.get("paused", false)) and _vendor_state == STATE_PLAYING
 	return _vendor_state == STATE_PLAYING
 
 func _apply_audio_state() -> bool:
-	if _player == null:
+	if _live_player() == null:
 		return false
 	var effective_audio_level := 0.0 if _muted else _audio_level
 	var applied := false
@@ -798,17 +837,17 @@ func _apply_audio_state() -> bool:
 	return applied
 
 func _bind_surface_resize() -> void:
-	if not (_surface is Control):
+	var control := _surface_as_control(_live_surface())
+	if control == null:
 		return
-	var control := _surface as Control
 	var resized_callback := Callable(self, "_on_surface_resized")
 	if not control.resized.is_connected(resized_callback):
 		control.resized.connect(resized_callback)
 
 func _unbind_surface_resize(surface: Variant) -> void:
-	if not (surface is Control):
+	var control := _surface_as_control(surface)
+	if control == null:
 		return
-	var control := surface as Control
 	var resized_callback := Callable(self, "_on_surface_resized")
 	if control.resized.is_connected(resized_callback):
 		control.resized.disconnect(resized_callback)
@@ -817,18 +856,19 @@ func _on_surface_resized() -> void:
 	_apply_cover_layout()
 
 func _apply_cover_layout() -> void:
-	if _player == null:
+	var player := _live_player()
+	var surface_control := _surface_as_control(_live_surface())
+	if player == null:
 		return
 	if _player_supports_property("cover_mode"):
 		_set_player_property("cover_mode", _cover_mode)
 	if _player_supports_property("expand"):
 		_set_player_property("expand", true)
-	if _surface is Control:
-		(_surface as Control).clip_contents = true
-	if not (_surface is Control and _player is Control):
+	if surface_control != null:
+		surface_control.clip_contents = true
+	if surface_control == null or not (player is Control):
 		return
-	var surface_control := _surface as Control
-	var player_control := _player as Control
+	var player_control := player as Control
 	player_control.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	player_control.custom_minimum_size = Vector2.ZERO
 	var surface_size := surface_control.size
