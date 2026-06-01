@@ -7,17 +7,16 @@ const SAMPLE_DURATION_SECONDS := 28.693313
 const SAMPLE_REMOTE_URL := "https://example.com/path/to/video.ogv"
 const BAD_VIDEO_PATH := "res://assets/videos/does_not_exist.ogv"
 const SLOT_NAMES := ["primary", "secondary"]
-const COVER_MODES := [
-	AeroVideoPlayerManager.COVER_MODE_STRETCH,
-	AeroVideoPlayerManager.COVER_MODE_CONTAIN,
-	AeroVideoPlayerManager.COVER_MODE_COVER,
-]
+const FIT_MODE_STRETCH := "stretch"
+const FIT_MODE_CONTAIN := "contain"
+const FIT_MODE_COVER := "cover"
+const FIT_MODES := [FIT_MODE_STRETCH, FIT_MODE_CONTAIN, FIT_MODE_COVER]
 const SLOT_DEFAULTS := {
 	"primary": {
 		"start_time": 0.0,
 		"duration_hint": SAMPLE_DURATION_SECONDS,
 		"loop": false,
-		"cover_mode": AeroVideoPlayerManager.COVER_MODE_CONTAIN,
+		"fit_mode": FIT_MODE_CONTAIN,
 		"audio_level": 1.0,
 		"label": "Primary slot",
 	},
@@ -25,7 +24,7 @@ const SLOT_DEFAULTS := {
 		"start_time": 3.0,
 		"duration_hint": SAMPLE_DURATION_SECONDS,
 		"loop": true,
-		"cover_mode": AeroVideoPlayerManager.COVER_MODE_COVER,
+		"fit_mode": FIT_MODE_COVER,
 		"audio_level": 0.6,
 		"label": "Secondary slot",
 	},
@@ -192,7 +191,7 @@ func _build_slot_panel(slot_name: String) -> Control:
 
 	var detail_label := Label.new()
 	detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	detail_label.text = "Position: 0.00 / 0.00 | Loop: false | Cover: contain | Format: unknown | Surface: false"
+	detail_label.text = "Position: 0.00 / 0.00 | Loop: false | Fit: contain | Format: unknown | Surface: false"
 	column.add_child(detail_label)
 
 	var audio_label := Label.new()
@@ -217,13 +216,13 @@ func _build_slot_panel(slot_name: String) -> Control:
 	column.add_child(config_row)
 
 	var cover_label := Label.new()
-	cover_label.text = "Cover"
+	cover_label.text = "Fit"
 	config_row.add_child(cover_label)
 
 	var cover_option := OptionButton.new()
 	cover_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for cover_mode in COVER_MODES:
-		cover_option.add_item(_cover_mode_label(cover_mode))
+	for fit_mode in FIT_MODES:
+		cover_option.add_item(_fit_mode_label(fit_mode))
 	cover_option.item_selected.connect(_on_cover_selected.bind(slot_name))
 	config_row.add_child(cover_option)
 
@@ -318,7 +317,7 @@ func _apply_slot_defaults(slot_name: String) -> void:
 	var duration_spin: SpinBox = widget.get("duration_spin", null)
 	if cover_option != null:
 		_cover_syncing[slot_name] = true
-		cover_option.select(_cover_mode_index(String(config.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE))))
+		cover_option.select(_fit_mode_index(String(config.get("fit_mode", FIT_MODE_CONTAIN))))
 		_cover_syncing[slot_name] = false
 	if audio_slider != null:
 		_audio_syncing[slot_name] = true
@@ -327,7 +326,7 @@ func _apply_slot_defaults(slot_name: String) -> void:
 	if duration_spin != null:
 		duration_spin.value = float(config.get("duration_hint", SAMPLE_DURATION_SECONDS))
 	_set_slot_source_input(slot_name, SAMPLE_VIDEO_PROJECT_PATH, float(config.get("duration_hint", SAMPLE_DURATION_SECONDS)))
-	_slot_bank.set_slot_cover_mode(slot_name, String(config.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE)))
+	_slot_bank.set_slot_fit_mode(slot_name, String(config.get("fit_mode", FIT_MODE_CONTAIN)))
 	_slot_bank.set_slot_audio_level(slot_name, float(config.get("audio_level", 1.0)))
 
 func _on_slot_button_pressed(slot_name: String, action: String) -> void:
@@ -401,7 +400,7 @@ func _load_slot_source(slot_name: String, path: String, extra_metadata: Dictiona
 		"start_time": float(config.get("start_time", 0.0)),
 		"duration_hint": _selected_duration_hint(slot_name),
 		"loop": bool(config.get("loop", false)),
-		"cover_mode": _selected_cover_mode(slot_name),
+		"fit_mode": _selected_fit_mode(slot_name),
 		"audio_level": _selected_audio_level(slot_name),
 		"metadata": metadata,
 	})
@@ -423,11 +422,11 @@ func _refresh_summary_label() -> void:
 	var parts: Array[String] = []
 	for slot_name in SLOT_NAMES:
 		var state := _slot_bank.get_slot_state(slot_name) if _slot_bank != null else {}
-		parts.append("%s=%s(loop=%s cover=%s audio=%s path=%s)" % [
+		parts.append("%s=%s(loop=%s fit=%s audio=%s path=%s)" % [
 			slot_name,
 			str(state.get("state", "idle")),
 			str(state.get("loop", false)),
-			str(state.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE)),
+			str(state.get("fit_mode", FIT_MODE_CONTAIN)),
 			_format_audio_level(float(state.get("audio_level", 1.0))),
 			str(state.get("source", {}).get("path", "")),
 		])
@@ -454,11 +453,11 @@ func _refresh_slot_labels(slot_name: String) -> void:
 	if status_label != null:
 		status_label.text = "State: %s" % str(state.get("state", "idle"))
 	if detail_label != null:
-		detail_label.text = "Position: %.2f / %.2f | Loop: %s | Cover: %s | Format: %s | Surface: %s | Resolved: %s" % [
+		detail_label.text = "Position: %.2f / %.2f | Loop: %s | Fit: %s | Format: %s | Surface: %s | Resolved: %s" % [
 			float(state.get("position", 0.0)),
 			float(state.get("duration", 0.0)),
 			str(state.get("loop", false)),
-			str(state.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE)),
+			str(state.get("fit_mode", FIT_MODE_CONTAIN)),
 			str(media_info.get("format_status", "unknown")),
 			str(state.get("surface_attached", false)),
 			str(media_info.get("resolved_path", media_info.get("path", ""))),
@@ -475,7 +474,7 @@ func _refresh_slot_labels(slot_name: String) -> void:
 		loop_button.text = "Loop: %s" % ("on" if bool(state.get("loop", false)) else "off")
 	if cover_option != null:
 		_cover_syncing[slot_name] = true
-		cover_option.select(_cover_mode_index(String(state.get("cover_mode", AeroVideoPlayerManager.DEFAULT_COVER_MODE))))
+		cover_option.select(_fit_mode_index(String(state.get("fit_mode", FIT_MODE_CONTAIN))))
 		_cover_syncing[slot_name] = false
 	if audio_slider != null:
 		_audio_syncing[slot_name] = true
@@ -498,28 +497,28 @@ func _get_slot_backend(slot_name: String) -> Variant:
 		return null
 	return manager.get_backend()
 
-func _cover_mode_index(cover_mode: String) -> int:
-	var normalized := String(cover_mode).strip_edges().to_lower()
-	var index := COVER_MODES.find(normalized)
-	return index if index >= 0 else COVER_MODES.find(AeroVideoPlayerManager.DEFAULT_COVER_MODE)
+func _fit_mode_index(fit_mode: String) -> int:
+	var normalized := String(fit_mode).strip_edges().to_lower()
+	var index := FIT_MODES.find(normalized)
+	return index if index >= 0 else FIT_MODES.find(FIT_MODE_CONTAIN)
 
-func _cover_mode_label(cover_mode: String) -> String:
-	match cover_mode:
-		AeroVideoPlayerManager.COVER_MODE_STRETCH:
+func _fit_mode_label(fit_mode: String) -> String:
+	match fit_mode:
+		FIT_MODE_STRETCH:
 			return "Stretch"
-		AeroVideoPlayerManager.COVER_MODE_COVER:
-			return "Cover"
+		FIT_MODE_COVER:
+			return "Fit"
 		_:
 			return "Contain"
 
-func _selected_cover_mode(slot_name: String) -> String:
+func _selected_fit_mode(slot_name: String) -> String:
 	var option: OptionButton = _slot_widgets.get(slot_name, {}).get("cover_option", null)
 	if option == null:
-		return AeroVideoPlayerManager.DEFAULT_COVER_MODE
+		return FIT_MODE_CONTAIN
 	var selected := option.selected
-	if selected < 0 or selected >= COVER_MODES.size():
-		return AeroVideoPlayerManager.DEFAULT_COVER_MODE
-	return COVER_MODES[selected]
+	if selected < 0 or selected >= FIT_MODES.size():
+		return FIT_MODE_CONTAIN
+	return FIT_MODES[selected]
 
 func _selected_audio_level(slot_name: String) -> float:
 	var slider: HSlider = _slot_widgets.get(slot_name, {}).get("audio_slider", null)
@@ -561,7 +560,7 @@ func _format_seconds(seconds: float) -> String:
 func _on_cover_selected(_index: int, slot_name: String) -> void:
 	if bool(_cover_syncing.get(slot_name, false)):
 		return
-	_slot_bank.set_slot_cover_mode(slot_name, _selected_cover_mode(slot_name))
+	_slot_bank.set_slot_fit_mode(slot_name, _selected_fit_mode(slot_name))
 	_refresh_slot_labels(slot_name)
 
 func _on_audio_slider_changed(value: float, slot_name: String) -> void:

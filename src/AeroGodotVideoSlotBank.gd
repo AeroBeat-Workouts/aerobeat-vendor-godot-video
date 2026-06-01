@@ -91,7 +91,8 @@ func load_slot(slot_name: String, source: Dictionary) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
 	manager.set_active_slot(normalized_slot)
-	manager.load(source, normalized_slot)
+	var normalized_source := _with_cover_mode_alias(source)
+	manager.load(normalized_source, normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
 func play_slot(slot_name: String) -> Dictionary:
@@ -145,12 +146,18 @@ func set_slot_rate(slot_name: String, rate: float) -> Dictionary:
 	manager.set_rate(rate, normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
 
-func set_slot_cover_mode(slot_name: String, cover_mode: String) -> Dictionary:
+func set_slot_fit_mode(slot_name: String, fit_mode: String) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager := _ensure_slot_manager(normalized_slot)
 	manager.set_active_slot(normalized_slot)
-	manager.set_cover_mode(cover_mode, normalized_slot)
+	if manager.has_method("set_fit_mode"):
+		manager.set_fit_mode(fit_mode, normalized_slot)
+	else:
+		manager.set_cover_mode(fit_mode, normalized_slot)
 	return _snapshot_slot_result(normalized_slot)
+
+func set_slot_cover_mode(slot_name: String, cover_mode: String) -> Dictionary:
+	return set_slot_fit_mode(slot_name, cover_mode)
 
 func set_slot_audio_level(slot_name: String, audio_level: float) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
@@ -182,7 +189,7 @@ func get_slot_state(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 	if manager == null:
 		return {}
 	manager.set_active_slot(normalized_slot)
-	return manager.get_state(normalized_slot).duplicate(true)
+	return _with_fit_mode_alias(manager.get_state(normalized_slot).duplicate(true))
 
 func get_slot_media_info(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
@@ -190,15 +197,15 @@ func get_slot_media_info(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 	if manager == null:
 		return {}
 	manager.set_active_slot(normalized_slot)
-	return manager.get_media_info(normalized_slot).duplicate(true)
+	return _with_fit_mode_alias(manager.get_media_info(normalized_slot).duplicate(true))
 
 func get_slot_descriptor(slot_name: String = DEFAULT_SLOT) -> Dictionary:
 	var normalized_slot := _normalize_slot_name(slot_name)
 	var manager: Node = get_slot_manager(normalized_slot)
 	var entry: Dictionary = _slot_entries.get(normalized_slot, {})
 	var surface: Node = entry.get("surface", null)
-	var state: Dictionary = manager.get_state(normalized_slot).duplicate(true) if manager != null else {}
-	var media_info: Dictionary = manager.get_media_info(normalized_slot).duplicate(true) if manager != null else {}
+	var state: Dictionary = _with_fit_mode_alias(manager.get_state(normalized_slot).duplicate(true)) if manager != null else {}
+	var media_info: Dictionary = _with_fit_mode_alias(manager.get_media_info(normalized_slot).duplicate(true)) if manager != null else {}
 	return {
 		"slot": normalized_slot,
 		"created": manager != null,
@@ -215,6 +222,7 @@ func get_capabilities() -> Dictionary:
 		"supports_slots": true,
 		"supports_independent_loop_control": true,
 		"supports_independent_rate_control": true,
+		"supports_independent_fit_mode_control": true,
 		"supports_independent_cover_mode_control": true,
 		"supports_independent_audio_level_control": true,
 		"supports_independent_audio_control": true,
@@ -292,11 +300,33 @@ func _snapshot_slot_result(slot_name: String) -> Dictionary:
 	if not error_info.is_empty():
 		return _fail(normalized_slot, str(error_info.get("code", "video_slot_operation_failed")), str(error_info.get("message", "Video slot operation failed.")), error_info.get("detail", {}))
 	return _ok(normalized_slot, {
-		"state": manager.get_state(normalized_slot).duplicate(true) if manager.has_method("get_state") else {},
-		"media_info": manager.get_media_info(normalized_slot).duplicate(true) if manager.has_method("get_media_info") else {},
+		"state": _with_fit_mode_alias(manager.get_state(normalized_slot).duplicate(true)) if manager.has_method("get_state") else {},
+		"media_info": _with_fit_mode_alias(manager.get_media_info(normalized_slot).duplicate(true)) if manager.has_method("get_media_info") else {},
 		"attached": bool(get_slot_descriptor(normalized_slot).get("attached", false)),
 		"slot_names": get_slot_names(),
 	})
+
+func _with_fit_mode_alias(payload: Dictionary) -> Dictionary:
+	var normalized := payload.duplicate(true)
+	if normalized.has("cover_mode") and not normalized.has("fit_mode"):
+		normalized["fit_mode"] = normalized["cover_mode"]
+	if normalized.has("source") and normalized["source"] is Dictionary:
+		var source := Dictionary(normalized["source"]).duplicate(true)
+		if source.has("cover_mode") and not source.has("fit_mode"):
+			source["fit_mode"] = source["cover_mode"]
+		normalized["source"] = source
+	return normalized
+
+func _with_cover_mode_alias(payload: Dictionary) -> Dictionary:
+	var normalized := payload.duplicate(true)
+	if normalized.has("fit_mode") and not normalized.has("cover_mode"):
+		normalized["cover_mode"] = normalized["fit_mode"]
+	if normalized.has("source") and normalized["source"] is Dictionary:
+		var source := Dictionary(normalized["source"]).duplicate(true)
+		if source.has("fit_mode") and not source.has("cover_mode"):
+			source["cover_mode"] = source["fit_mode"]
+		normalized["source"] = source
+	return normalized
 
 func _ok(slot_name: String, detail: Dictionary = {}) -> Dictionary:
 	var payload := detail.duplicate(true)

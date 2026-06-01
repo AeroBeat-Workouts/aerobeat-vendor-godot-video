@@ -9,7 +9,12 @@ var stream_position: float = 0.0
 var volume: float = 1.0
 var volume_db: float = 0.0
 var stream: Variant = null
-var cover_mode: String = "contain"
+var fit_mode: String = "contain"
+var cover_mode: String:
+	get:
+		return fit_mode
+	set(value):
+		fit_mode = value
 var expand: bool = false
 var last_source_descriptor: Dictionary = {}
 

@@ -48,12 +48,22 @@ Use one of these two paths instead:
 
 This keeps the public playback contract stable while avoiding class-name collisions in combined GodotEnv surfaces.
 
+## Fit-mode contract
+
+This repo now standardizes on `fit_mode` with the shared 3-state contract:
+
+- `stretch`
+- `contain`
+- `cover`
+
+Temporary compatibility seam: this vendor repo still accepts and emits `cover_mode`, and still exposes `set_cover_mode(...)` / `set_slot_cover_mode(...)` as aliases, because the current downstream `aerobeat-tool-video-player` facade in the testbed has not been migrated yet. Inside this repo, `fit_mode` is the canonical field and method name.
+
 ## Repo-local proving surface
 
 The hidden `.testbed/` workbench now includes a real `.ogv` proving surface.
 
 - `.testbed/assets/videos/calm_blue_sea_1.ogv` copies the proven environment-lane sample
-- `.testbed/scenes/video_backend_testbed.tscn` provides a manual proving scene for package-relative paths inside the project, absolute device paths outside the project, direct URLs, clickable seek timelines, and the existing load / play / pause / resume / stop / unload / mute coverage
+- `.testbed/scenes/video_backend_testbed.tscn` provides a manual proving scene for package-relative paths inside the project, absolute device paths outside the project, direct URLs, clickable seek timelines, fit-mode switching, and the existing load / play / pause / resume / stop / unload / mute coverage
 - `.testbed/tests/test_AeroGodotVideoBackendFactory.gd` exercises the factory + backend contract path under GUT, including relative package-path, external absolute-path, URL-resolution, clipping, and unload-reload regressions
 
 ## 📋 Repository Details

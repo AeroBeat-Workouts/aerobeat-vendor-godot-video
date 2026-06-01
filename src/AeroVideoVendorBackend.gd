@@ -19,12 +19,15 @@ func set_audio_level(_audio_level: float) -> Dictionary:
 		{"method": "set_audio_level"}
 	)
 
-func set_cover_mode(_cover_mode: String) -> Dictionary:
+func set_fit_mode(_fit_mode: String) -> Dictionary:
 	return CoreContract.fail(
-		"backend_cover_mode_unimplemented",
-		"set_cover_mode is not implemented on this backend.",
-		{"method": "set_cover_mode"}
+		"backend_fit_mode_unimplemented",
+		"set_fit_mode is not implemented on this backend.",
+		{"method": "set_fit_mode"}
 	)
+
+func set_cover_mode(_cover_mode: String) -> Dictionary:
+	return set_fit_mode(_cover_mode)
 
 func get_audio_state() -> Dictionary:
 	return {

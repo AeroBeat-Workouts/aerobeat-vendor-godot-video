@@ -8,9 +8,9 @@ const STATE_IDLE := "idle"
 const STATE_READY := "ready"
 const STATE_PLAYING := "playing"
 const STATE_PAUSED := "paused"
-const COVER_MODE_STRETCH := "stretch"
-const COVER_MODE_CONTAIN := "contain"
-const COVER_MODE_COVER := "cover"
+const FIT_MODE_STRETCH := "stretch"
+const FIT_MODE_CONTAIN := "contain"
+const FIT_MODE_COVER := "cover"
 
 var _factory: AeroGodotVideoBackendFactory
 var _backend: AeroGodotVideoBackend
@@ -60,7 +60,7 @@ func test_public_surface_is_vendor_specific_and_collision_safe() -> void:
 	assert_true(class_names.has("AeroGodotVideoBackend"), "Repo should export the vendor-specific backend class")
 	assert_true(class_names.has("AeroGodotVideoBackendFactory"), "Repo should export the vendor-specific factory class")
 	assert_true(class_names.has("AeroGodotVideoSlotBank"), "Repo should export the vendor-local multi-slot helper class")
-	assert_eq(AeroGodotVideoBackendFactory.VERSION, "0.4.0", "Factory version should reflect parity + cover/audio-level support")
+	assert_eq(AeroGodotVideoBackendFactory.VERSION, "0.5.0", "Factory version should reflect fit-mode alignment + audio-level support")
 
 func test_factory_can_create_a_prewired_video_player_manager_and_slot_bank() -> void:
 	assert_true(_manager is AeroVideoPlayerManager, "Factory should create the stable tool-facing manager")
@@ -70,7 +70,7 @@ func test_factory_can_create_a_prewired_video_player_manager_and_slot_bank() -> 
 	add_child_autofree(slot_bank)
 	assert_true(slot_bank is AeroGodotVideoSlotBank, "Factory should create the vendor-local multi-slot helper")
 	assert_true(bool(slot_bank.get_capabilities().get("supports_slots", false)), "Slot bank capabilities should advertise slot support")
-	assert_true(bool(slot_bank.get_capabilities().get("supports_independent_cover_mode_control", false)), "Slot bank should advertise independent cover-mode support")
+	assert_true(bool(slot_bank.get_capabilities().get("supports_independent_fit_mode_control", false)), "Slot bank should advertise independent fit-mode support")
 	assert_true(bool(slot_bank.get_capabilities().get("supports_independent_audio_level_control", false)), "Slot bank should advertise independent audio-level support")
 
 func test_backend_loads_the_real_ogv_sample_and_reports_verified_media() -> void:
@@ -83,7 +83,7 @@ func test_backend_loads_the_real_ogv_sample_and_reports_verified_media() -> void
 	var result := _backend.load({
 		"path": SAMPLE_VIDEO_PATH,
 		"duration_hint": 12.0,
-		"cover_mode": COVER_MODE_COVER,
+		"fit_mode": FIT_MODE_COVER,
 		"audio_level": 0.35,
 		"metadata": {"source": "vendor_testbed", "real_sample": true},
 	})
@@ -93,7 +93,7 @@ func test_backend_loads_the_real_ogv_sample_and_reports_verified_media() -> void
 	assert_eq(str(media_info.get("format_status", "")), "verified", "OGV should remain the verified format")
 	assert_eq(str(media_info.get("vendor", "")), AeroGodotVideoBackend.VENDOR_NAME, "Media info should identify the Godot vendor")
 	assert_true(bool(media_info.get("audio", {}).has("muted")), "Media info should include audio-state reporting")
-	assert_eq(str(media_info.get("cover_mode", "")), COVER_MODE_COVER, "Media info should expose the current cover mode")
+	assert_eq(str(media_info.get("fit_mode", "")), FIT_MODE_COVER, "Media info should expose the current fit mode")
 	assert_eq(str(_backend.get_state().get("vendor_state", "")), AeroGodotVideoBackend.STATE_READY, "Successful load should leave the backend ready")
 
 func test_backend_loads_an_external_absolute_ogv_file_outside_the_project_tree() -> void:
@@ -199,13 +199,13 @@ func test_manager_path_supports_load_play_pause_resume_seek_stop_cover_and_audio
 		"path": SAMPLE_VIDEO_PATH,
 		"duration_hint": 20.0,
 		"start_time": 2.0,
-		"cover_mode": COVER_MODE_COVER,
+		"cover_mode": FIT_MODE_COVER,
 		"audio_level": 0.45,
 		"metadata": {"real_sample": true},
 	})
 	assert_eq(str(_manager.get_state().get("state", "")), STATE_READY, "Manager should become ready after load")
 	assert_eq(_manager.get_position(), 2.0, "Manager should honor start_time")
-	assert_eq(str(_manager.get_state().get("cover_mode", "")), COVER_MODE_COVER, "Manager should expose the current cover mode")
+	assert_eq(str(_manager.get_state().get("cover_mode", "")), FIT_MODE_COVER, "Compatibility seam should keep the stable manager on cover_mode for now")
 	assert_eq(float(_manager.get_state().get("audio_level", -1.0)), 0.45, "Manager should expose the current audio level")
 
 	_manager.play()
@@ -216,8 +216,8 @@ func test_manager_path_supports_load_play_pause_resume_seek_stop_cover_and_audio
 	assert_eq(str(_manager.get_state().get("state", "")), STATE_PLAYING, "resume should reuse play on the stable manager")
 	_manager.seek(5.0)
 	assert_eq(_manager.get_position(), 5.0, "seek should update the manager position")
-	_manager.set_cover_mode(COVER_MODE_STRETCH)
-	assert_eq(str(_manager.get_state().get("cover_mode", "")), COVER_MODE_STRETCH, "Cover-mode updates should flow through the stable manager")
+	_manager.set_cover_mode(FIT_MODE_STRETCH)
+	assert_eq(str(_manager.get_state().get("cover_mode", "")), FIT_MODE_STRETCH, "Compatibility seam should keep fit-mode updates flowing through the stable manager via cover_mode")
 	_manager.set_audio_level(0.8)
 	assert_eq(float(_manager.get_state().get("audio_level", -1.0)), 0.8, "Audio-level updates should flow through the stable manager")
 	_manager.stop()
@@ -234,7 +234,7 @@ func test_backend_reapplies_layout_on_surface_resize_and_keeps_video_clipped_to_
 		"path": SAMPLE_VIDEO_PATH,
 		"width": 1920,
 		"height": 1080,
-		"cover_mode": COVER_MODE_CONTAIN,
+		"fit_mode": FIT_MODE_CONTAIN,
 		"metadata": {"real_sample": true, "scenario": "resize_clip"},
 	}).get("success", false)), "Backend should load the sample for resize coverage")
 	var player := surface.get_child(0) as Control
@@ -259,7 +259,7 @@ func test_slot_bank_unload_preserves_surface_binding_and_allows_reload() -> void
 	assert_true(bool(slot_bank.load_slot("primary", {
 		"path": SAMPLE_VIDEO_PATH,
 		"duration_hint": 12.0,
-		"cover_mode": COVER_MODE_COVER,
+		"fit_mode": FIT_MODE_COVER,
 		"metadata": {"real_sample": true, "scenario": "unload_reload"},
 	}).get("success", false)), "Slot bank should load media before unload coverage")
 	assert_true(bool(slot_bank.unload_slot("primary").get("success", false)), "Slot bank should expose explicit unload support")
@@ -269,7 +269,7 @@ func test_slot_bank_unload_preserves_surface_binding_and_allows_reload() -> void
 	assert_true(bool(slot_bank.load_slot("primary", {
 		"path": SAMPLE_VIDEO_PATH,
 		"duration_hint": 12.0,
-		"cover_mode": COVER_MODE_CONTAIN,
+		"fit_mode": FIT_MODE_CONTAIN,
 		"metadata": {"real_sample": true, "scenario": "reload_after_unload"},
 	}).get("success", false)), "A slot should reload cleanly after unload without reattaching its surface")
 	assert_eq(str(slot_bank.get_slot_state("primary").get("state", "")), STATE_READY, "Reload after unload should restore the slot to ready")
@@ -284,20 +284,20 @@ func test_backend_applies_and_updates_loop_cover_and_audio_state_on_the_player()
 		"path": SAMPLE_VIDEO_PATH,
 		"duration_hint": 12.0,
 		"loop": true,
-		"cover_mode": COVER_MODE_CONTAIN,
+		"fit_mode": FIT_MODE_CONTAIN,
 		"audio_level": 0.5,
 		"metadata": {"real_sample": true, "scenario": "loop"},
 	}).get("success", false)), "Backend should load the sample with loop enabled")
 	var player := surface.get_child(0)
 	assert_true(bool(player.get("loop")), "Fake player should receive loop=true from the initial load")
-	assert_eq(str(player.get("cover_mode")), COVER_MODE_CONTAIN, "Fake player should receive the initial cover mode")
+	assert_eq(str(player.get("fit_mode")), FIT_MODE_CONTAIN, "Fake player should receive the initial fit mode")
 	assert_true(bool(player.get("expand")), "Fake player should be expanded so cover/stretch sizing can fill the slot")
 	assert_eq(player.get("volume"), 0.5, "Fake player should receive the initial audio level")
 	assert_true(bool(_backend.set_loop(false).get("success", false)), "Backend should allow loop to be disabled after load")
-	assert_true(bool(_backend.set_cover_mode(COVER_MODE_COVER).get("success", false)), "Backend should allow cover mode to be changed after load")
+	assert_true(bool(_backend.set_fit_mode(FIT_MODE_COVER).get("success", false)), "Backend should allow fit mode to be changed after load")
 	assert_true(bool(_backend.set_audio_level(0.2).get("success", false)), "Backend should allow audio level to be changed after load")
 	assert_false(bool(player.get("loop")), "Fake player should reflect loop=false after toggling loop off")
-	assert_eq(str(player.get("cover_mode")), COVER_MODE_COVER, "Fake player should reflect cover mode changes")
+	assert_eq(str(player.get("fit_mode")), FIT_MODE_COVER, "Fake player should reflect fit mode changes")
 	assert_eq(player.get("volume"), 0.2, "Fake player should reflect audio-level changes")
 
 func test_backend_tolerates_unload_and_rebind_after_the_original_surface_was_freed() -> void:
@@ -309,7 +309,7 @@ func test_backend_tolerates_unload_and_rebind_after_the_original_surface_was_fre
 	assert_true(bool(_backend.load({
 		"path": SAMPLE_VIDEO_PATH,
 		"duration_hint": 12.0,
-		"cover_mode": COVER_MODE_COVER,
+		"fit_mode": FIT_MODE_COVER,
 		"metadata": {"real_sample": true, "scenario": "freed_surface_guard_first_load"},
 	}).get("success", false)), "Backend should load on the first surface before freed-surface coverage")
 
@@ -329,7 +329,7 @@ func test_backend_tolerates_unload_and_rebind_after_the_original_surface_was_fre
 	assert_true(bool(_backend.load({
 		"path": SAMPLE_VIDEO_PATH,
 		"duration_hint": 12.0,
-		"cover_mode": COVER_MODE_CONTAIN,
+		"fit_mode": FIT_MODE_CONTAIN,
 		"metadata": {"real_sample": true, "scenario": "freed_surface_guard_second_load"},
 	}).get("success", false)), "Backend should load again after clearing the freed surface reference")
 	assert_eq(str(_backend.get_state().get("vendor_state", "")), STATE_READY, "Replacement-surface reload should leave the backend ready")
@@ -354,7 +354,7 @@ func test_slot_bank_supports_multiple_independent_video_slots_cover_and_audio_le
 		"duration_hint": 12.0,
 		"start_time": 1.0,
 		"loop": false,
-		"cover_mode": COVER_MODE_CONTAIN,
+		"fit_mode": FIT_MODE_CONTAIN,
 		"audio_level": 0.4,
 		"metadata": {"slot": "left", "real_sample": true},
 	}).get("success", false)), "Left slot should load the sample")
@@ -363,7 +363,7 @@ func test_slot_bank_supports_multiple_independent_video_slots_cover_and_audio_le
 		"duration_hint": 24.0,
 		"start_time": 4.0,
 		"loop": true,
-		"cover_mode": COVER_MODE_STRETCH,
+		"fit_mode": FIT_MODE_STRETCH,
 		"audio_level": 0.9,
 		"metadata": {"slot": "right", "real_sample": true},
 	}).get("success", false)), "Right slot should load the sample independently")
@@ -381,8 +381,8 @@ func test_slot_bank_supports_multiple_independent_video_slots_cover_and_audio_le
 	assert_eq(float(right_state.get("position", 0.0)), 4.0, "Right slot should preserve its own start_time")
 	assert_false(bool(left_state.get("loop", true)), "Left slot should preserve its own loop setting")
 	assert_true(bool(right_state.get("loop", false)), "Right slot should preserve its own loop setting")
-	assert_eq(str(left_state.get("cover_mode", "")), COVER_MODE_CONTAIN, "Left slot should keep its own cover mode")
-	assert_eq(str(right_state.get("cover_mode", "")), COVER_MODE_STRETCH, "Right slot should keep its own cover mode")
+	assert_eq(str(left_state.get("fit_mode", "")), FIT_MODE_CONTAIN, "Left slot should keep its own fit mode")
+	assert_eq(str(right_state.get("fit_mode", "")), FIT_MODE_STRETCH, "Right slot should keep its own fit mode")
 	assert_eq(float(left_state.get("audio_level", -1.0)), 0.4, "Left slot should keep its own audio level")
 	assert_eq(float(right_state.get("audio_level", -1.0)), 0.9, "Right slot should keep its own audio level")
 
@@ -390,13 +390,13 @@ func test_slot_bank_supports_multiple_independent_video_slots_cover_and_audio_le
 	assert_eq(str(slot_bank.get_slot_state("left").get("state", "")), STATE_PLAYING, "Left slot should enter playing state")
 	assert_eq(str(slot_bank.get_slot_state("right").get("state", "")), STATE_READY, "Right slot should remain ready when only left plays")
 
-	assert_true(bool(slot_bank.set_slot_cover_mode("left", COVER_MODE_COVER).get("success", false)), "Left slot should support cover-mode toggles")
+	assert_true(bool(slot_bank.set_slot_fit_mode("left", FIT_MODE_COVER).get("success", false)), "Left slot should support fit-mode toggles")
 	assert_true(bool(slot_bank.set_slot_audio_level("right", 0.15).get("success", false)), "Right slot should support independent audio-level updates")
 	var left_player := left_surface.get_child(0)
 	var right_player := right_surface.get_child(0)
-	assert_eq(str(left_player.get("cover_mode")), COVER_MODE_COVER, "Left player should now have cover mode enabled")
+	assert_eq(str(left_player.get("fit_mode")), FIT_MODE_COVER, "Left player should now have fit mode enabled")
 	assert_eq(right_player.get("volume"), 0.15, "Right player should now have its updated audio level")
-	assert_eq(str(slot_bank.get_slot_state("left").get("cover_mode", "")), COVER_MODE_COVER, "Left state should report its updated cover mode")
+	assert_eq(str(slot_bank.get_slot_state("left").get("fit_mode", "")), FIT_MODE_COVER, "Left state should report its updated fit mode")
 	assert_eq(float(slot_bank.get_slot_state("right").get("audio_level", -1.0)), 0.15, "Right state should report its updated audio level")
 
 func test_backend_failure_cases_surface_honest_errors() -> void:

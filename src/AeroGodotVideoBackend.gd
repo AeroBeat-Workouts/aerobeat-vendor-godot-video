@@ -9,10 +9,15 @@ const SOURCE_KIND_PACKAGE := CoreContract.SOURCE_KIND_PACKAGE
 const SUPPORTED_SOURCE_KINDS := [SOURCE_KIND_FILE, SOURCE_KIND_URL, SOURCE_KIND_PACKAGE]
 const VERIFIED_EXTENSIONS := ["ogv"]
 const UNVERIFIED_EXTENSIONS := ["mp4", "webm", "mov", "mkv", "avi"]
-const COVER_MODE_STRETCH := "stretch"
-const COVER_MODE_CONTAIN := "contain"
-const COVER_MODE_COVER := "cover"
-const COVER_MODES := [COVER_MODE_STRETCH, COVER_MODE_CONTAIN, COVER_MODE_COVER]
+const FIT_MODE_STRETCH := "stretch"
+const FIT_MODE_CONTAIN := "contain"
+const FIT_MODE_COVER := "cover"
+const FIT_MODES := [FIT_MODE_STRETCH, FIT_MODE_CONTAIN, FIT_MODE_COVER]
+
+const COVER_MODE_STRETCH := FIT_MODE_STRETCH
+const COVER_MODE_CONTAIN := FIT_MODE_CONTAIN
+const COVER_MODE_COVER := FIT_MODE_COVER
+const COVER_MODES := FIT_MODES
 
 const STATE_IDLE := "idle"
 const STATE_ATTACHED := "attached"
@@ -26,7 +31,8 @@ const DEFAULT_UNMUTED_VOLUME := 1.0
 const DEFAULT_MUTED_VOLUME_DB := -80.0
 const DEFAULT_UNMUTED_VOLUME_DB := 0.0
 const DEFAULT_AUDIO_LEVEL := 1.0
-const DEFAULT_COVER_MODE := COVER_MODE_CONTAIN
+const DEFAULT_FIT_MODE := FIT_MODE_CONTAIN
+const DEFAULT_COVER_MODE := DEFAULT_FIT_MODE
 const DEFAULT_VIDEO_WIDTH := 1920
 const DEFAULT_VIDEO_HEIGHT := 1080
 
@@ -45,7 +51,7 @@ var _loop_enabled: bool = false
 var _rate: float = 1.0
 var _muted: bool = false
 var _audio_level: float = DEFAULT_AUDIO_LEVEL
-var _cover_mode: String = DEFAULT_COVER_MODE
+var _fit_mode: String = DEFAULT_FIT_MODE
 
 func set_player_factory(factory: Callable) -> void:
 	_player_factory = factory
@@ -98,7 +104,9 @@ func normalize_source(source: Dictionary) -> Dictionary:
 	normalized["locality"] = _detect_locality(str(normalized.get("path", "")))
 	normalized["is_local_file"] = normalized["kind"] == SOURCE_KIND_FILE and str(normalized.get("locality", "")) != "remote"
 	normalized["extension"] = str(normalized.get("path", "")).get_extension().to_lower()
-	normalized["cover_mode"] = _normalize_cover_mode(normalized.get("cover_mode", DEFAULT_COVER_MODE))
+	var requested_fit_mode := normalized.get("fit_mode", normalized.get("cover_mode", DEFAULT_FIT_MODE))
+	normalized["fit_mode"] = _normalize_fit_mode(requested_fit_mode)
+	normalized["cover_mode"] = normalized["fit_mode"]
 	normalized["audio_level"] = _normalize_audio_level(normalized.get("audio_level", DEFAULT_AUDIO_LEVEL))
 	normalized["width"] = max(1, int(normalized.get("width", DEFAULT_VIDEO_WIDTH)))
 	normalized["height"] = max(1, int(normalized.get("height", DEFAULT_VIDEO_HEIGHT)))
@@ -138,11 +146,12 @@ func validate_source(source: Dictionary) -> Dictionary:
 			"message": "Playback rate must be greater than zero.",
 			"detail": {"field": "rate", "source": source.duplicate(true)},
 		}
-	if not COVER_MODES.has(_normalize_cover_mode(source.get("cover_mode", DEFAULT_COVER_MODE))):
+	var fit_mode := _normalize_fit_mode(source.get("fit_mode", source.get("cover_mode", DEFAULT_FIT_MODE)))
+	if not FIT_MODES.has(fit_mode):
 		return {
-			"code": "backend_invalid_cover_mode",
-			"message": "Cover mode must be stretch, contain, or cover.",
-			"detail": {"field": "cover_mode", "source": source.duplicate(true), "supported": COVER_MODES.duplicate()},
+			"code": "backend_invalid_fit_mode",
+			"message": "Fit mode must be stretch, contain, or cover.",
+			"detail": {"field": "fit_mode", "source": source.duplicate(true), "supported": FIT_MODES.duplicate()},
 		}
 	var audio_level := float(source.get("audio_level", DEFAULT_AUDIO_LEVEL))
 	if audio_level < 0.0 or audio_level > 1.0:
@@ -164,8 +173,9 @@ func get_capabilities() -> Dictionary:
 		"surface_attach_mode": "direct_or_container_child",
 		"surface_types": ["VideoStreamPlayer", "Node", "CanvasItem", "Control"],
 		"audio_controls": ["mute_toggle", "audio_level"],
-		"cover_modes": COVER_MODES.duplicate(),
-		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status", "audio", "cover_mode"],
+		"fit_modes": FIT_MODES.duplicate(),
+		"cover_modes": FIT_MODES.duplicate(),
+		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status", "audio", "fit_mode", "cover_mode"],
 	}
 
 func load(source: Dictionary) -> Dictionary:
@@ -204,7 +214,9 @@ func load(source: Dictionary) -> Dictionary:
 		_loaded_source[key] = resolved_source[key]
 	_loop_enabled = bool(_loaded_source.get("loop", false))
 	_rate = float(_loaded_source.get("rate", 1.0))
-	_cover_mode = _normalize_cover_mode(_loaded_source.get("cover_mode", DEFAULT_COVER_MODE))
+	_fit_mode = _normalize_fit_mode(_loaded_source.get("fit_mode", _loaded_source.get("cover_mode", DEFAULT_FIT_MODE)))
+	_loaded_source["fit_mode"] = _fit_mode
+	_loaded_source["cover_mode"] = _fit_mode
 	_audio_level = _normalize_audio_level(_loaded_source.get("audio_level", DEFAULT_AUDIO_LEVEL))
 	_position_seconds = float(_loaded_source.get("start_time", 0.0))
 	_duration_seconds = maxf(_position_seconds, float(_loaded_source.get("duration_hint", 0.0)))
@@ -291,13 +303,17 @@ func set_rate(rate: float) -> Dictionary:
 	_last_error = {}
 	return _ok({"rate": _rate, "applied_to_player": applied_to_player})
 
-func set_cover_mode(cover_mode: String) -> Dictionary:
-	_cover_mode = _normalize_cover_mode(cover_mode)
+func set_fit_mode(fit_mode: String) -> Dictionary:
+	_fit_mode = _normalize_fit_mode(fit_mode)
 	if not _loaded_source.is_empty():
-		_loaded_source["cover_mode"] = _cover_mode
-	_apply_cover_layout()
+		_loaded_source["fit_mode"] = _fit_mode
+		_loaded_source["cover_mode"] = _fit_mode
+	_apply_fit_layout()
 	_last_error = {}
-	return _ok({"cover_mode": _cover_mode, "surface_attached": _live_surface() != null})
+	return _ok({"fit_mode": _fit_mode, "cover_mode": _fit_mode, "surface_attached": _live_surface() != null})
+
+func set_cover_mode(cover_mode: String) -> Dictionary:
+	return set_fit_mode(cover_mode)
 
 func set_audio_level(audio_level: float) -> Dictionary:
 	_audio_level = _normalize_audio_level(audio_level)
@@ -345,7 +361,8 @@ func get_media_info() -> Dictionary:
 	if info.is_empty() and not _loaded_source.is_empty():
 		info = _build_media_info(_loaded_source)
 	info["audio"] = get_audio_state()
-	info["cover_mode"] = _cover_mode
+	info["fit_mode"] = _fit_mode
+	info["cover_mode"] = _fit_mode
 	return info
 
 func attach_surface(node: Node) -> Dictionary:
@@ -402,7 +419,7 @@ func unload() -> Dictionary:
 	_rate = 1.0
 	_last_error = {}
 	_vendor_state = STATE_ATTACHED if surface != null else STATE_IDLE
-	_apply_cover_layout()
+	_apply_fit_layout()
 	return _ok({
 		"surface_attached": surface != null,
 		"media_loaded": false,
@@ -420,7 +437,7 @@ func translate_backend_error(code: String, message: String, detail: Dictionary =
 			category = "source"
 		"backend_invalid_surface", "backend_player_unavailable":
 			category = "surface"
-		"backend_invalid_rate", "backend_not_loaded", "backend_invalid_cover_mode", "backend_invalid_audio_level":
+		"backend_invalid_rate", "backend_not_loaded", "backend_invalid_fit_mode", "backend_invalid_cover_mode", "backend_invalid_audio_level":
 			category = "state"
 		_:
 			category = "runtime"
@@ -448,7 +465,8 @@ func translate_backend_state(raw_state: Dictionary = {}) -> Dictionary:
 		"duration": _duration_seconds,
 		"loop": _loop_enabled,
 		"rate": _rate,
-		"cover_mode": _cover_mode,
+		"fit_mode": _fit_mode,
+		"cover_mode": _fit_mode,
 		"audio_level": _audio_level,
 		"audio": get_audio_state(),
 		"last_error": _last_error.duplicate(true),
@@ -677,7 +695,8 @@ func _build_media_info(source: Dictionary) -> Dictionary:
 		"surface_attached": _surface != null,
 		"loop": _loop_enabled,
 		"rate": _rate,
-		"cover_mode": _cover_mode,
+		"fit_mode": _fit_mode,
+		"cover_mode": _fit_mode,
 		"audio": get_audio_state(),
 		"metadata": source.get("metadata", {}).duplicate(true),
 	}
@@ -758,7 +777,7 @@ func _sync_player_configuration() -> void:
 	if _player_supports_property("playback_speed"):
 		_set_player_property("playback_speed", _rate)
 	_apply_audio_state()
-	_apply_cover_layout()
+	_apply_fit_layout()
 	if _player.has_method("apply_source_descriptor") and not _loaded_source.is_empty():
 		_player.call("apply_source_descriptor", _loaded_source.duplicate(true))
 
@@ -772,7 +791,8 @@ func _snapshot_player_state() -> Dictionary:
 		"duration": _duration_seconds,
 		"loop": _loop_enabled,
 		"rate": _rate,
-		"cover_mode": _cover_mode,
+		"fit_mode": _fit_mode,
+		"cover_mode": _fit_mode,
 		"audio_level": _audio_level,
 		"audio": get_audio_state(),
 	}
@@ -789,8 +809,11 @@ func _snapshot_player_state() -> Dictionary:
 			raw["autoplay"] = bool(player.get("autoplay"))
 		if _player_supports_property("paused"):
 			raw["paused"] = bool(player.get("paused"))
-		if _player_supports_property("cover_mode"):
-			raw["cover_mode"] = str(player.get("cover_mode"))
+		if _player_supports_property("fit_mode"):
+			raw["fit_mode"] = str(player.get("fit_mode"))
+		elif _player_supports_property("cover_mode"):
+			raw["fit_mode"] = str(player.get("cover_mode"))
+		raw["cover_mode"] = str(raw.get("fit_mode", _fit_mode))
 		raw["playing"] = _is_player_playing(raw)
 		raw["player_name"] = str(player.name)
 	return raw
@@ -853,15 +876,17 @@ func _unbind_surface_resize(surface: Variant) -> void:
 		control.resized.disconnect(resized_callback)
 
 func _on_surface_resized() -> void:
-	_apply_cover_layout()
+	_apply_fit_layout()
 
-func _apply_cover_layout() -> void:
+func _apply_fit_layout() -> void:
 	var player := _live_player()
 	var surface_control := _surface_as_control(_live_surface())
 	if player == null:
 		return
-	if _player_supports_property("cover_mode"):
-		_set_player_property("cover_mode", _cover_mode)
+	if _player_supports_property("fit_mode"):
+		_set_player_property("fit_mode", _fit_mode)
+	elif _player_supports_property("cover_mode"):
+		_set_player_property("cover_mode", _fit_mode)
 	if _player_supports_property("expand"):
 		_set_player_property("expand", true)
 	if surface_control != null:
@@ -878,12 +903,12 @@ func _apply_cover_layout() -> void:
 		return
 	var video_size := _get_video_size()
 	var target_size := surface_size
-	match _cover_mode:
-		COVER_MODE_STRETCH:
+	match _fit_mode:
+		FIT_MODE_STRETCH:
 			target_size = surface_size
-		COVER_MODE_CONTAIN:
+		FIT_MODE_CONTAIN:
 			target_size = _fit_video(video_size, surface_size, false)
-		COVER_MODE_COVER:
+		FIT_MODE_COVER:
 			target_size = _fit_video(video_size, surface_size, true)
 	player_control.position = (surface_size - target_size) * 0.5
 	player_control.size = target_size
@@ -895,15 +920,18 @@ func _get_video_size() -> Vector2:
 	height = maxf(height, 1.0)
 	return Vector2(width, height)
 
-func _fit_video(video_size: Vector2, container_size: Vector2, cover: bool) -> Vector2:
+func _fit_video(video_size: Vector2, container_size: Vector2, should_cover: bool) -> Vector2:
 	var scale_x := container_size.x / video_size.x
 	var scale_y := container_size.y / video_size.y
-	var scale := maxf(scale_x, scale_y) if cover else minf(scale_x, scale_y)
+	var scale := maxf(scale_x, scale_y) if should_cover else minf(scale_x, scale_y)
 	return video_size * scale
 
-func _normalize_cover_mode(value: Variant) -> String:
+func _normalize_fit_mode(value: Variant) -> String:
 	var normalized := str(value).strip_edges().to_lower()
-	return normalized if COVER_MODES.has(normalized) else DEFAULT_COVER_MODE
+	return normalized if FIT_MODES.has(normalized) else DEFAULT_FIT_MODE
+
+func _normalize_cover_mode(value: Variant) -> String:
+	return _normalize_fit_mode(value)
 
 func _normalize_audio_level(value: Variant) -> float:
 	return clampf(float(value), 0.0, 1.0)
