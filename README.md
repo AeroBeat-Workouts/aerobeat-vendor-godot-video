@@ -122,7 +122,7 @@ godot --headless --path .testbed --import
 From the repo root:
 
 ```bash
-godot --headless --path .testbed --script addons/gut/gut_cmdln.gd \
+godot --headless --path .testbed --script addons/aerobeat-vendor-godot-unit-test/gut_cmdln.gd \
   -gdir=res://tests \
   -ginclude_subdirs \
   -gexit
@@ -131,6 +131,6 @@ godot --headless --path .testbed --script addons/gut/gut_cmdln.gd \
 ### Validation notes
 
 - `.testbed/addons.jsonc` is the committed dev/test dependency contract.
-- The manifest intentionally includes `aerobeat-tool-core`, `aerobeat-tool-video-player`, and `gut`.
+- The manifest intentionally includes `aerobeat-tool-core`, `aerobeat-tool-video-player`, and `aerobeat-vendor-godot-unit-test`.
 - The manual proving scene is repo-local and uses the real `.ogv` sample rather than introducing a new ad hoc fixture.
 - This repo should not reintroduce a generic public manager name; the public tool-facing facade remains `AeroVideoPlayerManager` upstream.

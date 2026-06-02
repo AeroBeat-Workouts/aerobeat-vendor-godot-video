@@ -35,5 +35,5 @@ func test_addons_manifest_pins_expected_video_stack_dependencies() -> void:
 	var manifest_text := _read_repo_file(ADDONS_MANIFEST_PATH)
 	assert_true(manifest_text.contains('"aerobeat-tool-core"'), "addons manifest should pin aerobeat-tool-core")
 	assert_true(manifest_text.contains('"aerobeat-tool-video-player"'), "addons manifest should pin aerobeat-tool-video-player")
-	assert_true(manifest_text.contains('"gut"'), "addons manifest should pin gut for repo-local tests")
+	assert_true(manifest_text.contains('"aerobeat-vendor-godot-unit-test"'), "addons manifest should pin the vendor unit-test addon for repo-local tests")
 	assert_false(manifest_text.contains('"aerobeat-core"'), "addons manifest should not reintroduce stale aerobeat-core drift")
