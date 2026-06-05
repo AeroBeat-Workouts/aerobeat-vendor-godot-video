@@ -175,7 +175,11 @@ func get_capabilities() -> Dictionary:
 		"audio_controls": ["mute_toggle", "audio_level"],
 		"fit_modes": FIT_MODES.duplicate(),
 		"cover_modes": FIT_MODES.duplicate(),
-		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status", "audio", "fit_mode", "cover_mode"],
+		"metadata_known_fields": ["path", "kind", "vendor", "backend_family", "extension", "locality", "duration", "position", "surface_attached", "format_status", "audio", "fit_mode", "cover_mode", "transport_mode"],
+		"transport_mode": TRANSPORT_MODE_APPROX_TIME_SEEK,
+		"frame_transport_exact": false,
+		"supports_frame_step": false,
+		"supports_seek_to_frame": false,
 	}
 
 func load(source: Dictionary) -> Dictionary:
@@ -365,6 +369,44 @@ func get_media_info() -> Dictionary:
 	info["cover_mode"] = _fit_mode
 	return info
 
+func get_transport_capabilities() -> Dictionary:
+	var nominal_fps := _source_nominal_fps()
+	return {
+		"transport_mode": TRANSPORT_MODE_APPROX_TIME_SEEK,
+		"can_step_forward": false,
+		"can_step_backward": false,
+		"can_seek_frame": false,
+		"nominal_fps": nominal_fps if nominal_fps > 0.0 else null,
+		"frame_duration_sec": (1.0 / nominal_fps) if nominal_fps > 0.0 else null,
+		"exactness_note": "Godot's built-in VideoStreamPlayer path for .ogv only exposes approximate time seek here; exact frame stepping is refused instead of faked.",
+		"limitation_code": TRANSPORT_UNSUPPORTED_CODE,
+	}
+
+func get_transport_status() -> Dictionary:
+	var state := get_state()
+	var capabilities := get_transport_capabilities()
+	return {
+		"transport_mode": capabilities.get("transport_mode", TRANSPORT_MODE_APPROX_TIME_SEEK),
+		"can_step_forward": bool(capabilities.get("can_step_forward", false)),
+		"can_step_backward": bool(capabilities.get("can_step_backward", false)),
+		"can_seek_frame": bool(capabilities.get("can_seek_frame", false)),
+		"frame_index": null,
+		"frame_count": null,
+		"nominal_fps": capabilities.get("nominal_fps", null),
+		"frame_duration_sec": capabilities.get("frame_duration_sec", null),
+		"paused": str(state.get("vendor_state", STATE_IDLE)) == STATE_PAUSED,
+		"position_sec": float(state.get("position", _position_seconds)),
+		"duration_sec": float(state.get("duration", _duration_seconds)),
+		"exactness_note": capabilities.get("exactness_note", ""),
+		"limitation_code": capabilities.get("limitation_code", TRANSPORT_UNSUPPORTED_CODE),
+	}
+
+func step_frames(delta_frames: int) -> Dictionary:
+	return _transport_unsupported("step_frames", {"delta_frames": delta_frames})
+
+func seek_to_frame(frame_index: int) -> Dictionary:
+	return _transport_unsupported("seek_to_frame", {"frame_index": frame_index})
+
 func attach_surface(node: Node) -> Dictionary:
 	if node == null:
 		return _fail("backend_invalid_surface", "Cannot attach a null output surface.")
@@ -437,7 +479,7 @@ func translate_backend_error(code: String, message: String, detail: Dictionary =
 			category = "source"
 		"backend_invalid_surface", "backend_player_unavailable":
 			category = "surface"
-		"backend_invalid_rate", "backend_not_loaded", "backend_invalid_fit_mode", "backend_invalid_cover_mode", "backend_invalid_audio_level":
+		"backend_invalid_rate", "backend_not_loaded", "backend_invalid_fit_mode", "backend_invalid_cover_mode", "backend_invalid_audio_level", TRANSPORT_UNSUPPORTED_CODE:
 			category = "state"
 		_:
 			category = "runtime"
@@ -496,6 +538,24 @@ func _infer_source_kind(path: String) -> String:
 	if not path.contains("://"):
 		return SOURCE_KIND_PACKAGE
 	return SOURCE_KIND_FILE
+
+func _source_nominal_fps() -> float:
+	if _loaded_source.is_empty():
+		return 0.0
+	var fps := float(_loaded_source.get("nominal_fps", _loaded_source.get("fps_hint", 0.0)))
+	return fps if fps > 0.0 else 0.0
+
+func _transport_unsupported(method_name: String, detail: Dictionary = {}) -> Dictionary:
+	var capabilities := get_transport_capabilities()
+	var error_detail := detail.duplicate(true)
+	error_detail["transport_mode"] = capabilities.get("transport_mode", TRANSPORT_MODE_APPROX_TIME_SEEK)
+	error_detail["capabilities"] = capabilities.duplicate(true)
+	error_detail["source"] = _loaded_source.duplicate(true)
+	return _fail(
+		TRANSPORT_UNSUPPORTED_CODE,
+		"%s requires exact frame-addressed transport, but the built-in Godot .ogv path only supports approximate time seek." % method_name,
+		error_detail
+	)
 
 func _normalize_file_uri(path: String) -> String:
 	var trimmed := path.strip_edges()
@@ -580,7 +640,7 @@ func _download_remote_stream_to_cache(url: String) -> String:
 		return ""
 	if not _http_client_wait_for(client, [HTTPClient.STATUS_CONNECTED]):
 		return ""
-	var request_error := client.request(HTTPClient.METHOD_GET, str(request.get("request_path", "/")), ["User-Agent: AeroBeatVendorGodotVideo/0.5.0", "Accept: application/ogg, application/octet-stream"])
+	var request_error := client.request(HTTPClient.METHOD_GET, str(request.get("request_path", "/")), ["User-Agent: AeroBeatVendorGodotVideo/0.6.0", "Accept: application/ogg, application/octet-stream"])
 	if request_error != OK:
 		return ""
 	var body := PackedByteArray()
@@ -698,6 +758,7 @@ func _build_media_info(source: Dictionary) -> Dictionary:
 		"fit_mode": _fit_mode,
 		"cover_mode": _fit_mode,
 		"audio": get_audio_state(),
+		"transport_mode": TRANSPORT_MODE_APPROX_TIME_SEEK,
 		"metadata": source.get("metadata", {}).duplicate(true),
 	}
 

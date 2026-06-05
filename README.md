@@ -23,6 +23,7 @@ The public package surface now centers on two explicit Godot-specific entrypoint
 - local-file source normalization and validation
 - Godot stream loading for the verified `.ogv` path, including absolute local files that live outside the project tree
 - vendor capability reporting and state translation
+- truthful transport reporting for the current built-in `.ogv` path, including explicit refusal of fake exact frame stepping
 - vendor-local audio mute/state helpers for proving and inspection
 
 ## Ownership split
@@ -47,6 +48,16 @@ Use one of these two paths instead:
    - call `create_manager()` for a pre-wired `AeroVideoPlayerManager`
 
 This keeps the public playback contract stable while avoiding class-name collisions in combined GodotEnv surfaces.
+
+## Truthful transport contract
+
+This vendor layer now reports the current Godot built-in `.ogv` playback path as `approx_time_seek`.
+
+That means:
+
+- `get_transport_capabilities()` and `get_transport_status()` are explicit about approximate-only frame positioning
+- `step_frames(...)` and `seek_to_frame(...)` fail with a transport-unsupported result instead of faking exact frame stepping
+- optional fps hints can still be surfaced as informational metadata, but they do not upgrade the exactness tier
 
 ## Fit-mode contract
 

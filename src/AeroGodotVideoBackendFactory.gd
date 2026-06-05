@@ -5,7 +5,7 @@
 class_name AeroGodotVideoBackendFactory
 extends RefCounted
 
-const VERSION := "0.5.0"
+const VERSION := "0.6.0"
 const ManagerScript := preload("res://addons/aerobeat-tool-video-player/src/AeroVideoPlayerManager.gd")
 const BackendScript := preload("AeroGodotVideoBackend.gd")
 const SlotBankScript := preload("AeroGodotVideoSlotBank.gd")

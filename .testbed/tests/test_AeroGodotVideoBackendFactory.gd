@@ -60,7 +60,7 @@ func test_public_surface_is_vendor_specific_and_collision_safe() -> void:
 	assert_true(class_names.has("AeroGodotVideoBackend"), "Repo should export the vendor-specific backend class")
 	assert_true(class_names.has("AeroGodotVideoBackendFactory"), "Repo should export the vendor-specific factory class")
 	assert_true(class_names.has("AeroGodotVideoSlotBank"), "Repo should export the vendor-local multi-slot helper class")
-	assert_eq(AeroGodotVideoBackendFactory.VERSION, "0.5.0", "Factory version should reflect fit-mode alignment + audio-level support")
+	assert_eq(AeroGodotVideoBackendFactory.VERSION, "0.6.0", "Factory version should reflect the truthful transport contract addition")
 
 func test_factory_can_create_a_prewired_video_player_manager_and_slot_bank() -> void:
 	assert_true(_manager is AeroVideoPlayerManager, "Factory should create the stable tool-facing manager")
@@ -188,6 +188,40 @@ func test_backend_loads_remote_url_without_explicit_kind_when_path_is_http() -> 
 	assert_eq(str(media_info.get("path", "")), remote_url, "Media info should preserve the caller-facing URL for implicit remote loads")
 	assert_eq(str(media_info.get("resolved_path", "")), _external_sample_path, "Implicit remote loads should expose the cache file path used for playback")
 	assert_eq(str(media_info.get("kind", "")), AeroGodotVideoBackend.SOURCE_KIND_URL, "Implicit remote loads should report the url source kind")
+
+func test_backend_reports_approx_time_seek_transport_and_refuses_exact_frame_ops() -> void:
+	var surface := Control.new()
+	surface.name = "TransportSurface"
+	surface.custom_minimum_size = Vector2(640, 360)
+	add_child_autofree(surface)
+	assert_true(bool(_backend.attach_surface(surface).get("success", false)), "Backend should attach to a surface container for transport coverage")
+
+	assert_true(bool(_backend.load({
+		"path": SAMPLE_VIDEO_PATH,
+		"duration_hint": 12.0,
+		"start_time": 1.5,
+		"fps_hint": 24.0,
+	}).get("success", false)), "Backend should load the sample for transport coverage")
+
+	var capabilities := _backend.get_transport_capabilities()
+	assert_eq(String(capabilities.get("transport_mode", "")), AeroGodotVideoBackend.TRANSPORT_MODE_APPROX_TIME_SEEK, "Built-in Godot backend should report approximate time-seek transport")
+	assert_false(bool(capabilities.get("can_step_forward", true)), "Built-in Godot backend should refuse exact frame stepping")
+	assert_false(bool(capabilities.get("can_seek_frame", true)), "Built-in Godot backend should refuse exact frame-addressed seeking")
+	assert_eq(float(capabilities.get("nominal_fps", -1.0)), 24.0, "Backend should surface fps hints as informational transport metadata when provided")
+
+	var status := _backend.get_transport_status()
+	assert_eq(String(status.get("transport_mode", "")), AeroGodotVideoBackend.TRANSPORT_MODE_APPROX_TIME_SEEK, "Transport status should match the approximate-only capability tier")
+	assert_eq(float(status.get("position_sec", -1.0)), 1.5, "Transport status should report the current time position")
+	assert_eq(status.get("frame_index", "sentinel"), null, "Approximate-only transport should not pretend to know an exact current frame index")
+
+	var step_result := _backend.step_frames(1)
+	assert_false(bool(step_result.get("success", true)), "step_frames should explicitly fail on the built-in Godot backend")
+	assert_eq(String(step_result.get("code", "")), AeroGodotVideoBackend.TRANSPORT_UNSUPPORTED_CODE, "Approximate-only transport should fail with the explicit transport-unsupported code")
+	assert_eq(float(_backend.get_position()), 1.5, "Refused frame stepping should leave the current time position unchanged")
+
+	var seek_frame_result := _backend.seek_to_frame(12)
+	assert_false(bool(seek_frame_result.get("success", true)), "seek_to_frame should explicitly fail on the built-in Godot backend")
+	assert_eq(String(seek_frame_result.get("code", "")), AeroGodotVideoBackend.TRANSPORT_UNSUPPORTED_CODE, "Approximate-only frame seek should use the explicit transport-unsupported code")
 
 func test_manager_path_supports_load_play_pause_resume_seek_stop_cover_and_audio_level() -> void:
 	var surface := Control.new()
